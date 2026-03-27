@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import qrcode
 from telethon import Button, TelegramClient, events
 from telethon.errors import SessionPasswordNeededError
+from telethon.errors.rpcerrorlist import MessageNotModifiedError
 from telethon.sessions import MemorySession, StringSession
 
 from bingx_bot.alerts import AlertPublisher
@@ -78,6 +79,12 @@ class ControlBot(AlertPublisher):
             if not self._is_allowed(sender_id):
                 await event.answer("Not allowed", alert=True)
                 return
+            try:
+                # Acknowledge the callback immediately so Telegram buttons feel responsive
+                # even if the following handler needs a file write or network request.
+                await event.answer()
+            except Exception:
+                LOGGER.debug("Callback answer failed", exc_info=True)
             if not await self._handle_callback(event, sender_id, event.data.decode("utf-8")):
                 await event.answer("Unknown action", alert=True)
 
@@ -160,7 +167,15 @@ class ControlBot(AlertPublisher):
         if data.startswith("action:parse_clear_session:"):
             account_id = data.split(":", 3)[3]
             runtime = self._clear_parse_session(runtime, account_id)
-            await self._edit(event, self._parse_text(runtime), self._parse_menu()); return True
+            await self._edit(event, self._parse_accounts_text(runtime), self._parse_accounts_menu(runtime, "view"))
+            await event.answer("Сессия сброшена", alert=False)
+            return True
+        if data.startswith("action:parse_delete_account:"):
+            account_id = data.split(":", 3)[3]
+            runtime = self._delete_parse_account(runtime, account_id)
+            await self._edit(event, self._parse_accounts_text(runtime), self._parse_accounts_menu(runtime, "view"))
+            await event.answer("Аккаунт удален", alert=False)
+            return True
 
         if data == "menu:auto_blacklist":
             await self._edit(event, self._auto_blacklist_text(runtime), self._auto_blacklist_menu()); return True
@@ -395,7 +410,10 @@ class ControlBot(AlertPublisher):
         return self._main_menu()
 
     async def _edit(self, event: events.CallbackQuery.Event, text: str, buttons) -> None:
-        await event.edit(text, buttons=buttons); await event.answer()
+        try:
+            await event.edit(text, buttons=buttons)
+        except MessageNotModifiedError:
+            LOGGER.debug("Message not modified for callback edit")
 
     async def _sender_id(self, event: events.CallbackQuery.Event) -> int | None:
         sender = await event.get_sender()
@@ -557,6 +575,8 @@ class ControlBot(AlertPublisher):
         if mode != "select":
             for acc in runtime.parser_accounts[:20]:
                 rows.append([Button.inline(f"🗑 Сброс сессии: {acc.title}".encode("utf-8"), f"action:parse_clear_session:{acc.account_id}".encode("utf-8"))])
+            for acc in runtime.parser_accounts[:20]:
+                rows.append([Button.inline(f"❌ Удалить: {acc.title}".encode("utf-8"), f"action:parse_delete_account:{acc.account_id}".encode("utf-8"))])
         rows.append([Button.inline("⬅️ Назад", b"menu:auto_parse")])
         return rows
 
@@ -605,6 +625,24 @@ class ControlBot(AlertPublisher):
                 }
             )
         return self.runtime_store.update(parser_accounts=payload)
+
+    def _delete_parse_account(self, runtime, account_id: str):
+        accounts = [acc for acc in runtime.parser_accounts if acc.account_id != account_id]
+        payload = [
+            {
+                "account_id": a.account_id,
+                "title": a.title,
+                "api_id": a.api_id,
+                "api_hash": a.api_hash,
+                "phone": a.phone,
+                "session": a.session,
+            }
+            for a in accounts
+        ]
+        primary_id = runtime.parser_primary_account_id
+        if primary_id == account_id:
+            primary_id = accounts[0].account_id if accounts else None
+        return self.runtime_store.update(parser_accounts=payload, parser_primary_account_id=primary_id)
 
     async def _run_parser_qr_login_for_sender(self, sender_id: int, account_id: str) -> str:
         runtime = self.runtime_store.load()
