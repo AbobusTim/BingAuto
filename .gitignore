@@ -1,0 +1,8 @@
+.env
+*.session
+__pycache__/
+*.pyc
+runtime/*.log
+runtime/trading_settings.json
+runtime/alert_stats.json
+runtime/trade_history.json

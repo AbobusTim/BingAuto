@@ -1,0 +1,33 @@
+{
+  "api_key": "",
+  "secret_key": "",
+  "enabled": true,
+  "dry_run": true,
+  "order_type": "MARKET",
+  "quote_size": 25.0,
+  "limit_offset_pct": 0.0015,
+  "max_market_slippage_pct": 0.0025,
+  "leverage": 2,
+  "blacklist_enabled": true,
+  "index_alerts": {
+    "enabled": true,
+    "channels": [],
+    "token_blacklist": [],
+    "min_spread_pct": 3.0,
+    "level_1_pct": 5.0,
+    "level_2_pct": 8.0,
+    "level_3_pct": 12.0,
+    "aligned_spread_pct": 1.0
+  },
+  "mark_alerts": {
+    "enabled": true,
+    "channels": [],
+    "token_blacklist": [],
+    "min_spread_pct": 3.0,
+    "level_1_pct": 5.0,
+    "level_2_pct": 8.0,
+    "level_3_pct": 12.0,
+    "aligned_spread_pct": 1.0
+  },
+  "blacklist": []
+}
