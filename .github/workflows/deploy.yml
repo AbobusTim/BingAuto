@@ -61,10 +61,16 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -euo pipefail
+          CLEAN_SSH_HOST="$(printf '%s' "$SSH_HOST" | tr -d '\r\n')"
+          CLEAN_SSH_USER="$(printf '%s' "$SSH_USER" | tr -d '\r\n')"
+
+          echo "Testing SSH to host: $CLEAN_SSH_HOST"
+          echo "Testing SSH as user: $CLEAN_SSH_USER"
+
           ssh -vvv -i ~/.ssh/deploy_key \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            "$SSH_USER@$SSH_HOST" "echo SSH connected"
+            "$CLEAN_SSH_USER@$CLEAN_SSH_HOST" "echo SSH connected"
 
       - name: Deploy over SSH
         shell: bash
@@ -80,6 +86,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          CLEAN_SSH_HOST="$(printf '%s' "$SSH_HOST" | tr -d '\r\n')"
+          CLEAN_SSH_USER="$(printf '%s' "$SSH_USER" | tr -d '\r\n')"
           APP_DIR="$(printf '%s' "$DEPLOY_PATH" | tr -d '\r\n')"
           SERVICE_NAME="$(printf '%s' "$SYSTEMD_SERVICE" | tr -d '\r\n')"
           SERVICE_USER="$(printf '%s' "$SYSTEMD_USER" | tr -d '\r\n')"
@@ -87,7 +95,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            "$SSH_USER@$SSH_HOST" \
+            "$CLEAN_SSH_USER@$CLEAN_SSH_HOST" \
             APP_DIR="$APP_DIR" \
             REPO_URL="$REPO_URL" \
             BRANCH="$BRANCH" \
