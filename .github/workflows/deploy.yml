@@ -42,57 +42,90 @@ jobs:
           echo "SYSTEMD_SERVICE: ${SYSTEMD_SERVICE:+present}"
           echo "SYSTEMD_USER: ${SYSTEMD_USER:+present}"
           echo "APP_ENV_BASE64: ${APP_ENV_BASE64:+present}"
-          echo "SSH_PRIVATE_KEY lines: $(printf '%s' "$SSH_PRIVATE_KEY" | wc -l)"
-          echo "SSH_PORT: using hardcoded 22"
 
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          debug: true
-          script: |
-            set -e
+      - name: Prepare SSH key
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null
 
-            APP_DIR="${{ secrets.DEPLOY_PATH }}"
-            REPO_URL="https://github.com/${{ github.repository }}.git"
-            BRANCH="${{ github.ref_name }}"
-            SYSTEMD_SERVICE="${{ secrets.SYSTEMD_SERVICE }}"
-            SYSTEMD_USER="${{ secrets.SYSTEMD_USER }}"
-            APP_ENV_BASE64="${{ secrets.APP_ENV_BASE64 }}"
+      - name: Test SSH connection
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -euo pipefail
+          ssh -vvv -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$SSH_HOST" "echo SSH connected"
 
-            if [ -z "$APP_DIR" ] || [ -z "$BRANCH" ]; then
-              echo "Missing one of required secrets: DEPLOY_PATH / SSH_*"
-              exit 1
+      - name: Deploy over SSH
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          SYSTEMD_SERVICE: ${{ secrets.SYSTEMD_SERVICE }}
+          SYSTEMD_USER: ${{ secrets.SYSTEMD_USER }}
+          APP_ENV_BASE64: ${{ secrets.APP_ENV_BASE64 }}
+          REPO_URL: https://github.com/${{ github.repository }}.git
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          APP_DIR="$(printf '%s' "$DEPLOY_PATH" | tr -d '\r\n')"
+          SERVICE_NAME="$(printf '%s' "$SYSTEMD_SERVICE" | tr -d '\r\n')"
+          SERVICE_USER="$(printf '%s' "$SYSTEMD_USER" | tr -d '\r\n')"
+
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$SSH_HOST" \
+            APP_DIR="$APP_DIR" \
+            REPO_URL="$REPO_URL" \
+            BRANCH="$BRANCH" \
+            SERVICE_NAME="$SERVICE_NAME" \
+            SERVICE_USER="$SERVICE_USER" \
+            APP_ENV_BASE64="$APP_ENV_BASE64" \
+            'bash -se' <<'REMOTE'
+          set -euo pipefail
+
+          echo "Deploy dir: $APP_DIR"
+          echo "Branch: $BRANCH"
+
+          if [ ! -d "$APP_DIR/.git" ]; then
+            mkdir -p "$APP_DIR"
+            git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+          fi
+
+          cd "$APP_DIR"
+          git fetch origin "$BRANCH"
+          git checkout "$BRANCH"
+          git reset --hard "origin/$BRANCH"
+
+          python3 -m venv .venv || true
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+          if [ -n "${APP_ENV_BASE64:-}" ]; then
+            printf '%s' "$APP_ENV_BASE64" | base64 -d > .env
+          fi
+
+          if [ -n "${SERVICE_NAME:-}" ]; then
+            if [ -z "${SERVICE_USER:-}" ] || [ "$SERVICE_USER" = "root" ]; then
+              systemctl restart "$SERVICE_NAME"
+            else
+              sudo -u "$SERVICE_USER" systemctl --user restart "$SERVICE_NAME"
             fi
+          fi
 
-            if [ ! -d "$APP_DIR/.git" ]; then
-              mkdir -p "$APP_DIR"
-              git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
-            fi
-
-            cd "$APP_DIR"
-            git fetch origin "$BRANCH"
-            git checkout "$BRANCH"
-            git reset --hard "origin/$BRANCH"
-
-            python3 -m venv .venv || true
-            . .venv/bin/activate
-            pip install --upgrade pip
-            pip install -r requirements.txt
-
-            if [ -n "$APP_ENV_BASE64" ]; then
-              echo "$APP_ENV_BASE64" | base64 -d > .env
-            fi
-
-            if [ -n "$SYSTEMD_SERVICE" ]; then
-              if [ -z "$SYSTEMD_USER" ] || [ "$SYSTEMD_USER" = "root" ]; then
-                systemctl restart "$SYSTEMD_SERVICE"
-              else
-                sudo -u "$SYSTEMD_USER" systemctl --user restart "$SYSTEMD_SERVICE"
-              fi
-            fi
-
-            echo "Deploy completed."
+          echo "Deploy completed."
+          REMOTE
