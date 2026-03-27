@@ -11,6 +11,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate deploy secrets
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          SYSTEMD_SERVICE: ${{ secrets.SYSTEMD_SERVICE }}
+          SYSTEMD_USER: ${{ secrets.SYSTEMD_USER }}
+          APP_ENV_BASE64: ${{ secrets.APP_ENV_BASE64 }}
+        run: |
+          set -euo pipefail
+
+          require_non_empty() {
+            local name="$1"
+            local value="$2"
+            if [ -z "$value" ]; then
+              echo "::error title=Missing secret::$name is empty or missing"
+              exit 1
+            fi
+            echo "$name: present"
+          }
+
+          require_non_empty "SSH_HOST" "$SSH_HOST"
+          require_non_empty "SSH_USER" "$SSH_USER"
+          require_non_empty "SSH_PORT" "$SSH_PORT"
+          require_non_empty "SSH_PRIVATE_KEY" "$SSH_PRIVATE_KEY"
+          require_non_empty "DEPLOY_PATH" "$DEPLOY_PATH"
+
+          echo "SYSTEMD_SERVICE: ${SYSTEMD_SERVICE:+present}"
+          echo "SYSTEMD_USER: ${SYSTEMD_USER:+present}"
+          echo "APP_ENV_BASE64: ${APP_ENV_BASE64:+present}"
+          echo "SSH_PRIVATE_KEY lines: $(printf '%s' "$SSH_PRIVATE_KEY" | wc -l)"
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -18,6 +53,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
+          debug: true
           script: |
             set -e
 
