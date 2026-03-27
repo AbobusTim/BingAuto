@@ -119,6 +119,9 @@ jobs:
           git reset --hard "origin/$BRANCH"
 
           if ! python3 -m venv .venv; then
+            apt-get clean
+            rm -rf /var/lib/apt/lists/*
+            rm -rf /var/cache/apt/archives/*.deb
             apt-get update
             apt-get install -y python3-venv
             python3 -m venv .venv
