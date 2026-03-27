@@ -16,7 +16,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
             set -e
@@ -24,6 +24,9 @@ jobs:
             APP_DIR="${{ secrets.DEPLOY_PATH }}"
             REPO_URL="https://github.com/${{ github.repository }}.git"
             BRANCH="${{ github.ref_name }}"
+            SYSTEMD_SERVICE="${{ secrets.SYSTEMD_SERVICE }}"
+            SYSTEMD_USER="${{ secrets.SYSTEMD_USER }}"
+            APP_ENV_BASE64="${{ secrets.APP_ENV_BASE64 }}"
 
             if [ -z "$APP_DIR" ] || [ -z "$BRANCH" ]; then
               echo "Missing one of required secrets: DEPLOY_PATH / SSH_*"
@@ -45,6 +48,16 @@ jobs:
             pip install --upgrade pip
             pip install -r requirements.txt
 
-            # TODO: Replace with your real restart command
-            # Example: systemctl restart bingx-bot.service
-            echo "Deploy completed. Set service restart command in workflow."
+            if [ -n "$APP_ENV_BASE64" ]; then
+              echo "$APP_ENV_BASE64" | base64 -d > .env
+            fi
+
+            if [ -n "$SYSTEMD_SERVICE" ]; then
+              if [ -z "$SYSTEMD_USER" ] || [ "$SYSTEMD_USER" = "root" ]; then
+                systemctl restart "$SYSTEMD_SERVICE"
+              else
+                sudo -u "$SYSTEMD_USER" systemctl --user restart "$SYSTEMD_SERVICE"
+              fi
+            fi
+
+            echo "Deploy completed."

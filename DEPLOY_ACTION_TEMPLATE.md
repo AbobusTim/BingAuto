@@ -13,11 +13,20 @@
 - `SSH_PORT`  
   Значение: `22`
 
-- `SSH_KEY`  
+- `SSH_PRIVATE_KEY`  
   Вставь **содержимое** приватного ключа `~/.ssh/abober-server-key.pem` (весь текст с `-----BEGIN ...-----` до `-----END ...-----`)
 
 - `DEPLOY_PATH`  
   Пример: `/opt/bingx-bot`
+
+- `SYSTEMD_SERVICE`  
+  Пример: `k-zero` или `bingx-bot`
+
+- `SYSTEMD_USER`  
+  Пример: `root`
+
+- `APP_ENV_BASE64`  
+  Base64 от содержимого `.env` файла (опционально, если нужно выкатывать env через Actions)
 
 ## Как запускать
 
@@ -27,9 +36,8 @@
 
 ## Важно
 
-В файле workflow сейчас стоит заглушка на рестарт сервиса.  
-Отредактируй `.github/workflows/deploy.yml` и замени на свою команду, например:
-
-```bash
-systemctl restart bingx-bot.service
-```
+Workflow уже умеет:
+1. Обновить код
+2. Переустановить зависимости
+3. Распаковать `.env` из `APP_ENV_BASE64` (если заполнен)
+4. Перезапустить `systemd` сервис (если заполнен `SYSTEMD_SERVICE`)
