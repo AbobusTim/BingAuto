@@ -4,26 +4,20 @@
 
 ## Обязательные Secrets
 
-- `SERVER_HOST`  
+- `SSH_HOST`  
   Значение: `45.32.52.125`
 
-- `SERVER_USER`  
+- `SSH_USER`  
   Значение: `root`
 
-- `SERVER_PORT`  
+- `SSH_PORT`  
   Значение: `22`
 
-- `SERVER_SSH_KEY`  
+- `SSH_KEY`  
   Вставь **содержимое** приватного ключа `~/.ssh/abober-server-key.pem` (весь текст с `-----BEGIN ...-----` до `-----END ...-----`)
 
-- `SERVER_APP_DIR`  
+- `DEPLOY_PATH`  
   Пример: `/opt/bingx-bot`
-
-- `DEPLOY_REPO_URL`  
-  Значение: `https://github.com/AbobusTim/BingAuto.git`
-
-- `DEPLOY_BRANCH`  
-  Значение: `main`
 
 ## Как запускать
 
