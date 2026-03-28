@@ -168,6 +168,12 @@ class ControlBot(AlertPublisher):
         if data.startswith("set:auto_account_primary:"):
             account_id = data.split(":", 2)[2]
             await self._edit(event, self._accounts_text(self.runtime_store.update(primary_account_id=account_id)), self._accounts_menu()); return True
+        if data.startswith("action:auto_delete_account:"):
+            account_id = data.split(":", 2)[2]
+            runtime = self._delete_account(runtime, account_id)
+            await self._edit(event, self._accounts_list(runtime), self._accounts_list_menu(runtime, "view"))
+            await event.answer("Аккаунт удален", alert=False)
+            return True
 
         if data == "menu:auto_parse":
             await self._edit(event, self._parse_text(runtime), self._parse_menu()); return True
@@ -478,6 +484,23 @@ class ControlBot(AlertPublisher):
         accounts.append(TradingAccount(account_id=account_id, title=title, comment=comment, api_key=api_key, secret_key=secret_key))
         payload = [{"account_id": a.account_id, "title": a.title, "comment": a.comment, "api_key": a.api_key, "secret_key": a.secret_key} for a in accounts]
         return self.runtime_store.update(accounts=payload, primary_account_id=runtime.primary_account_id or account_id)
+
+    def _delete_account(self, runtime, account_id: str):
+        accounts = [acc for acc in runtime.accounts if acc.account_id != account_id]
+        payload = [
+            {
+                "account_id": a.account_id,
+                "title": a.title,
+                "comment": a.comment,
+                "api_key": a.api_key,
+                "secret_key": a.secret_key,
+            }
+            for a in accounts
+        ]
+        primary_id = runtime.primary_account_id
+        if primary_id == account_id:
+            primary_id = accounts[0].account_id if accounts else None
+        return self.runtime_store.update(accounts=payload, primary_account_id=primary_id)
 
     @staticmethod
     def _account_title(index: int) -> str:
@@ -810,6 +833,9 @@ class ControlBot(AlertPublisher):
             label = f"{acc.title}{star}"
             action = f"set:auto_account_primary:{acc.account_id}" if mode == "select" else f"show:auto_account:{acc.account_id}"
             rows.append([Button.inline(label.encode("utf-8"), action.encode("utf-8"))])
+        if mode != "select":
+            for acc in runtime.accounts[:20]:
+                rows.append([Button.inline(f"❌ Удалить: {acc.title}".encode("utf-8"), f"action:auto_delete_account:{acc.account_id}".encode("utf-8"))])
         rows.append([Button.inline("⬅️ Назад", b"menu:auto_accounts")])
         return rows
 
