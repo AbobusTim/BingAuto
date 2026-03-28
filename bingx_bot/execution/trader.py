@@ -159,8 +159,9 @@ class Trader:
             quantity=quantity,
             price=limit_price,
         )
+        fill_price = limit_price if limit_price is not None else live_last
         if runtime.order_type == "LIMIT":
-            await self._cancel_open_limit_if_timed_out(
+            open_result = await self._await_open_limit_result(
                 symbol=signal.symbol,
                 order_response=response,
                 side=order_side,
@@ -168,7 +169,9 @@ class Trader:
                 price=limit_price,
                 timeout_sec=runtime.limit_open_timeout_sec,
             )
-        fill_price = limit_price if limit_price is not None else live_last
+            if not open_result["filled"]:
+                return ExecuteResult(status="submitted", detail="limit_timeout_cancelled")
+            fill_price = float(open_result["fill_price"] or fill_price)
         margin_usdt = (quantity * fill_price) / runtime.leverage if runtime.leverage > 0 else None
         opened = self.trade_history.record_open(
             symbol=signal.symbol,
@@ -555,7 +558,7 @@ class Trader:
             self.client.secret_key = account.secret_key
         return True
 
-    async def _cancel_open_limit_if_timed_out(
+    async def _await_open_limit_result(
         self,
         symbol: str,
         order_response: dict,
@@ -563,13 +566,32 @@ class Trader:
         position_side: str,
         price: float | None,
         timeout_sec: int,
-    ) -> None:
-        if timeout_sec <= 0:
-            return
-        await asyncio.sleep(timeout_sec)
+    ) -> dict[str, float | bool | None]:
+        immediate_fill_price = self._extract_filled_price(order_response)
+        if immediate_fill_price is not None:
+            return {"filled": True, "fill_price": immediate_fill_price}
+
         order_id = self._extract_order_id(order_response)
+        if timeout_sec <= 0:
+            if await self._is_order_open(symbol, order_id, side, position_side, price):
+                await self._cancel_order_safe(symbol, order_id, side, position_side, price, "OPEN")
+                return {"filled": False, "fill_price": None}
+            fill_price = await self._detect_position_fill_price(symbol, position_side)
+            return {"filled": fill_price is not None, "fill_price": fill_price}
+
+        deadline = asyncio.get_running_loop().time() + timeout_sec
+        while asyncio.get_running_loop().time() < deadline:
+            if not await self._is_order_open(symbol, order_id, side, position_side, price):
+                fill_price = await self._detect_position_fill_price(symbol, position_side)
+                return {"filled": fill_price is not None, "fill_price": fill_price}
+            await asyncio.sleep(0.5)
+
         if await self._is_order_open(symbol, order_id, side, position_side, price):
             await self._cancel_order_safe(symbol, order_id, side, position_side, price, "OPEN")
+            return {"filled": False, "fill_price": None}
+
+        fill_price = await self._detect_position_fill_price(symbol, position_side)
+        return {"filled": fill_price is not None, "fill_price": fill_price}
 
     async def _cancel_close_limit_if_timed_out(
         self,
@@ -599,6 +621,21 @@ class Trader:
             if self._is_same_order(item, side, position_side, price):
                 return True
         return False
+
+    async def _detect_position_fill_price(self, symbol: str, position_side: str) -> float | None:
+        rows = await self.client.get_open_positions(symbol)
+        for raw in rows:
+            payload_symbol = str(raw.get("symbol", "")).upper()
+            if payload_symbol != symbol:
+                continue
+            direction = self._normalize_direction(str(raw.get("positionSide", raw.get("side", ""))).upper(), raw)
+            if direction != position_side:
+                continue
+            qty = self._pick_abs_float(raw, "positionAmt", "positionQty", "positionAmount", "positionSize", "amount")
+            if qty <= 0:
+                continue
+            return self._pick_float(raw, "avgPrice", "avgOpenPrice", "entryPrice", "openPrice")
+        return None
 
     async def _cancel_order_safe(
         self,
@@ -694,6 +731,35 @@ class Trader:
                 continue
             value = str(raw).strip()
             if value:
+                return value
+        order = payload.get("order")
+        if isinstance(order, dict):
+            for key in ("orderId", "orderID", "id"):
+                raw = order.get(key)
+                if raw is None:
+                    continue
+                value = str(raw).strip()
+                if value:
+                    return value
+        return None
+
+    @staticmethod
+    def _extract_filled_price(payload: dict) -> float | None:
+        order = payload.get("order")
+        if not isinstance(order, dict):
+            return None
+        status = str(order.get("status", "")).upper()
+        if status != "FILLED":
+            return None
+        for key in ("avgPrice", "price"):
+            raw = order.get(key)
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
                 return value
         return None
 
