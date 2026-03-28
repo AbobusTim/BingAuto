@@ -166,7 +166,7 @@ class ControlBot(AlertPublisher):
         if data == "menu:auto_account_primary":
             await self._edit(event, "Выбери основной аккаунт", self._accounts_list_menu(runtime, "select")); return True
         if data.startswith("set:auto_account_primary:"):
-            account_id = data.split(":", 3)[3]
+            account_id = data.split(":", 2)[2]
             await self._edit(event, self._accounts_text(self.runtime_store.update(primary_account_id=account_id)), self._accounts_menu()); return True
 
         if data == "menu:auto_parse":
@@ -185,17 +185,17 @@ class ControlBot(AlertPublisher):
         if data == "menu:parse_account_primary":
             await self._edit(event, "Выбери аккаунт парсинга", self._parse_accounts_menu(runtime, "select")); return True
         if data.startswith("set:parse_account_primary:"):
-            account_id = data.split(":", 3)[3]
+            account_id = data.split(":", 2)[2]
             runtime = self.runtime_store.update(parser_primary_account_id=account_id)
             await self._edit(event, self._parse_text(runtime), self._parse_menu()); return True
         if data.startswith("action:parse_clear_session:"):
-            account_id = data.split(":", 3)[3]
+            account_id = data.split(":", 2)[2]
             runtime = self._clear_parse_session(runtime, account_id)
             await self._edit(event, self._parse_accounts_text(runtime), self._parse_accounts_menu(runtime, "view"))
             await event.answer("Сессия сброшена", alert=False)
             return True
         if data.startswith("action:parse_delete_account:"):
-            account_id = data.split(":", 3)[3]
+            account_id = data.split(":", 2)[2]
             runtime = self._delete_parse_account(runtime, account_id)
             await self._edit(event, self._parse_accounts_text(runtime), self._parse_accounts_menu(runtime, "view"))
             await event.answer("Аккаунт удален", alert=False)
