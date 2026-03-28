@@ -114,6 +114,13 @@ class BingXClient:
         }
         return await self._signed_post("/openApi/swap/v2/trade/leverage", params)
 
+    async def set_margin_type(self, symbol: str, margin_type: str) -> dict:
+        params = {
+            "symbol": symbol,
+            "marginType": margin_type.upper(),
+        }
+        return await self._signed_post("/openApi/swap/v2/trade/marginType", params)
+
     async def cancel_order(self, symbol: str, order_id: str) -> dict:
         params = {
             "symbol": symbol,

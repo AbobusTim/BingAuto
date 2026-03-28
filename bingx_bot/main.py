@@ -86,7 +86,8 @@ async def async_main() -> None:
             )
         )
     if settings.run_telegram_source:
-        if settings.telegram_channel:
+        telegram_source_channel = runtime.parser_telegram_channel or settings.telegram_channel
+        if telegram_source_channel:
             sources.append(
                 TelegramSignalSource(
                     settings=settings,
@@ -96,7 +97,10 @@ async def async_main() -> None:
                 )
             )
         else:
-            LOGGER.warning("RUN_TELEGRAM_SOURCE=true but TELEGRAM_CHANNEL is empty, telegram source disabled")
+            LOGGER.warning(
+                "RUN_TELEGRAM_SOURCE=true but no telegram source channel is configured "
+                "(runtime parser channel and TELEGRAM_CHANNEL are empty), telegram source disabled"
+            )
     if not sources:
         LOGGER.warning("No data sources enabled. Set RUN_PARSER_SOURCE or RUN_TELEGRAM_SOURCE to true")
 

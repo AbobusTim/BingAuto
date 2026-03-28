@@ -33,6 +33,11 @@ class MarketParserSource:
     async def run(self) -> None:
         while True:
             try:
+                if self.alert_manager is not None:
+                    runtime = self.alert_manager.runtime_store.load()
+                    if not runtime.index_alerts.enabled and not runtime.mark_alerts.enabled:
+                        await asyncio.sleep(self.settings.bingx_poll_interval_sec)
+                        continue
                 symbols = await self._load_symbols()
                 tasks = [self._scan_symbol(symbol) for symbol in symbols]
                 await asyncio.gather(*tasks)

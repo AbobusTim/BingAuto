@@ -115,6 +115,10 @@ class ControlBot(AlertPublisher):
             await self._edit(event, self._params_text(self.runtime_store.update(order_type="MARKET")), self._params_menu()); return True
         if data == "set:auto_order:LIMIT":
             await self._edit(event, self._params_text(self.runtime_store.update(order_type="LIMIT")), self._params_menu()); return True
+        if data == "set:auto_margin:ISOLATED":
+            await self._edit(event, self._params_text(self.runtime_store.update(margin_type="ISOLATED")), self._params_menu()); return True
+        if data == "set:auto_margin:CROSSED":
+            await self._edit(event, self._params_text(self.runtime_store.update(margin_type="CROSSED")), self._params_menu()); return True
 
         if data == "prompt:auto_quote_size":
             return await self._ask(event, sender_id, "auto:quote_size", "menu:auto_params", "Размер USDT. Пример: 25")
@@ -462,6 +466,7 @@ class ControlBot(AlertPublisher):
     def _auto_status(self, runtime) -> str:
         primary = runtime.primary_account().title if runtime.primary_account() else "Не выбран"
         return (
+            f"Margin Type: {runtime.margin_type}\n"
             f"🤖 Auto Entry\n\n"
             f"• Enabled: {runtime.enabled}\n"
             f"• Dry Run: {runtime.dry_run}\n"
@@ -477,6 +482,7 @@ class ControlBot(AlertPublisher):
 
     def _params_text(self, runtime) -> str:
         return (
+            f"Margin Type: {runtime.margin_type}\n"
             f"⚙️ Параметры\n\n"
             f"• Order Type: {runtime.order_type}\n"
             f"• Size: {runtime.quote_size} USDT\n"
@@ -700,7 +706,7 @@ class ControlBot(AlertPublisher):
         return ", ".join(sorted(runtime.blacklist)) if runtime.blacklist else "empty"
 
     def _profile_status(self, title: str, profile: AlertProfile) -> str:
-        return f"{title}\nenabled={profile.enabled}\nchannels={len(profile.channels)}\nblacklist={len(profile.token_blacklist)}"
+        return f"{title}\nparser_enabled={profile.enabled}\nchannels={len(profile.channels)}\nblacklist={len(profile.token_blacklist)}"
 
     def _channels_preview(self, title: str, profile: AlertProfile) -> str:
         return f"{title} channels={len(profile.channels)}"
@@ -762,6 +768,7 @@ class ControlBot(AlertPublisher):
 
     def _params_menu(self):
         return [
+            [Button.inline("ISOLATED", b"set:auto_margin:ISOLATED"), Button.inline("CROSSED", b"set:auto_margin:CROSSED")],
             [Button.inline("🟡 MARKET", b"set:auto_order:MARKET"), Button.inline("🔵 LIMIT", b"set:auto_order:LIMIT")],
             [Button.inline("💵 Размер USDT", b"prompt:auto_quote_size"), Button.inline("🧲 Плечо", b"prompt:auto_leverage")],
             [Button.inline("↗️ Slip OPEN LIMIT %", b"prompt:auto_limit_open_offset"), Button.inline("↘️ Slip CLOSE LIMIT %", b"prompt:auto_limit_close_offset")],
@@ -797,7 +804,7 @@ class ControlBot(AlertPublisher):
     def _profile_menu(self, key: str):
         key_b = key.encode("utf-8")
         return [
-            [Button.inline("🟢 Вкл/Выкл профиль", b"toggle:profile:" + key_b)],
+            [Button.inline("Parser ON/OFF", b"toggle:profile:" + key_b)],
             [Button.inline("📣 Каналы", b"menu:channels:" + key_b), Button.inline("🚫 Токены ЧС", b"menu:blacklist:" + key_b)],
             [Button.inline("📏 Уровни/Пороги", b"menu:levels:" + key_b), Button.inline("📊 Стата", b"show:stats:" + key_b)],
             [Button.inline("⬅️ На главную", b"menu:home")],

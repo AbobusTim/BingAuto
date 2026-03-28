@@ -43,6 +43,7 @@ class RuntimeTradingSettings:
     enabled: bool
     dry_run: bool
     order_type: str
+    margin_type: str
     quote_size: float
     limit_open_offset_pct: float
     limit_close_offset_pct: float
@@ -95,6 +96,7 @@ class RuntimeSettingsStore:
             "enabled": runtime.enabled,
             "dry_run": runtime.dry_run,
             "order_type": runtime.order_type,
+            "margin_type": runtime.margin_type,
             "quote_size": runtime.quote_size,
             "limit_open_offset_pct": runtime.limit_open_offset_pct,
             "limit_close_offset_pct": runtime.limit_close_offset_pct,
@@ -120,6 +122,7 @@ class RuntimeSettingsStore:
             "enabled": current.enabled,
             "dry_run": current.dry_run,
             "order_type": current.order_type,
+            "margin_type": current.margin_type,
             "quote_size": current.quote_size,
             "limit_open_offset_pct": current.limit_open_offset_pct,
             "limit_close_offset_pct": current.limit_close_offset_pct,
@@ -162,6 +165,7 @@ class RuntimeSettingsStore:
             enabled=True,
             dry_run=self.settings.dry_run,
             order_type="MARKET",
+            margin_type="ISOLATED",
             quote_size=25.0,
             limit_open_offset_pct=0.0015,
             limit_close_offset_pct=0.0015,
@@ -221,6 +225,7 @@ class RuntimeSettingsStore:
             enabled=bool(payload.get("enabled", True)),
             dry_run=bool(payload.get("dry_run", self.settings.dry_run)),
             order_type=str(payload.get("order_type", "MARKET")).upper(),
+            margin_type=str(payload.get("margin_type", "ISOLATED")).upper(),
             quote_size=float(payload.get("quote_size", 25.0)),
             limit_open_offset_pct=float(payload.get("limit_open_offset_pct", payload.get("limit_offset_pct", 0.0015))),
             limit_close_offset_pct=float(payload.get("limit_close_offset_pct", payload.get("limit_offset_pct", 0.0015))),
@@ -353,7 +358,7 @@ class RuntimeSettingsStore:
     @staticmethod
     def _default_alert_profile() -> AlertProfile:
         return AlertProfile(
-            enabled=True,
+            enabled=False,
             channels=(),
             token_blacklist=frozenset(),
             min_spread_pct=3.0,

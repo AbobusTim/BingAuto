@@ -113,6 +113,7 @@ class Trader:
             return
 
         live_last = await self._fetch_live_price(signal.symbol)
+        await self.client.set_margin_type(signal.symbol, runtime.margin_type)
         await self.client.set_leverage(signal.symbol, runtime.leverage, position_side)
         limit_price = None
         if runtime.order_type == "LIMIT":
