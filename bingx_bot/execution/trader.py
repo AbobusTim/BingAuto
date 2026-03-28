@@ -171,7 +171,24 @@ class Trader:
                 timeout_sec=runtime.limit_open_timeout_sec,
             )
             if not open_result["filled"]:
-                return ExecuteResult(status="submitted", detail="limit_timeout_cancelled")
+                await self._notify_status(
+                    f"🟡 Лимитка не исполнилась\n\n"
+                    f"• Токен: {signal.symbol.split('-', 1)[0].upper()}\n"
+                    f"• Направление: {position_side}\n"
+                    f"• Размер: {quantity:.2f}\n"
+                    f"• Цена лимитки: {limit_price:.8f}\n"
+                    f"• Таймер: {runtime.limit_open_timeout_sec}s\n"
+                    f"• Действие: ордер отменен"
+                )
+                LOGGER.info(
+                    "OPEN LIMIT not filled within timeout, order cancelled | symbol=%s direction=%s qty=%s limit_price=%s timeout=%ss",
+                    signal.symbol,
+                    position_side,
+                    quantity,
+                    limit_price,
+                    runtime.limit_open_timeout_sec,
+                )
+                return ExecuteResult(status="skipped_limit_timeout", detail="limit_timeout_cancelled")
             fill_price = float(open_result["fill_price"] or fill_price)
         margin_usdt = (quantity * fill_price) / runtime.leverage if runtime.leverage > 0 else None
         opened = self.trade_history.record_open(
