@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import logging
@@ -79,17 +79,17 @@ class Trader:
         if not runtime.enabled:
             LOGGER.info("Trading disabled in runtime settings")
             await self._notify_status(
-                f"⛔ Автовход отключен\n\n"
-                f"• Сигнал: {signal.symbol} {signal.side.value}\n"
-                f"• Причина: trading disabled"
+                f"в›” РђРІС‚РѕРІС…РѕРґ РѕС‚РєР»СЋС‡РµРЅ\n\n"
+                f"вЂў РЎРёРіРЅР°Р»: {signal.symbol} {signal.side.value}\n"
+                f"вЂў РџСЂРёС‡РёРЅР°: trading disabled"
             )
             return ExecuteResult(status="skipped_disabled", detail="trading disabled")
         if not self._apply_active_credentials(runtime):
             LOGGER.warning("No primary trading account configured, order skipped")
             await self._notify_status(
-                f"⛔ Сделка пропущена\n\n"
-                f"• Сигнал: {signal.symbol} {signal.side.value}\n"
-                f"• Причина: не выбран основной аккаунт"
+                f"в›” РЎРґРµР»РєР° РїСЂРѕРїСѓС‰РµРЅР°\n\n"
+                f"вЂў РЎРёРіРЅР°Р»: {signal.symbol} {signal.side.value}\n"
+                f"вЂў РџСЂРёС‡РёРЅР°: РЅРµ РІС‹Р±СЂР°РЅ РѕСЃРЅРѕРІРЅРѕР№ Р°РєРєР°СѓРЅС‚"
             )
             return ExecuteResult(status="skipped_no_account", detail="no primary account")
 
@@ -127,12 +127,12 @@ class Trader:
                 rules.min_notional,
             )
             await self._notify_status(
-                f"🧪 Dry Run\n\n"
-                f"• Сигнал: {signal.symbol} {signal.side.value}\n"
-                f"• Ордер: {runtime.order_type}\n"
-                f"• Margin: {runtime.margin_type}\n"
-                f"• Плечо: x{runtime.leverage}\n"
-                f"• Кол-во: {quantity:.6f}"
+                f"рџ§Є Dry Run\n\n"
+                f"вЂў РЎРёРіРЅР°Р»: {signal.symbol} {signal.side.value}\n"
+                f"вЂў РћСЂРґРµСЂ: {runtime.order_type}\n"
+                f"вЂў Margin: {runtime.margin_type}\n"
+                f"вЂў РџР»РµС‡Рѕ: x{runtime.leverage}\n"
+                f"вЂў РљРѕР»-РІРѕ: {quantity:.6f}"
             )
             return ExecuteResult(status="skipped_dry_run", detail="dry run")
 
@@ -183,13 +183,13 @@ class Trader:
                         entry_price=partial_fill_price,
                     )
                     await self._notify_status(
-                        f"🟡 Лимитка частично исполнилась\n\n"
-                        f"• Токен: {signal.symbol.split('-', 1)[0].upper()}\n"
+                        f"{("📈" if position_side == "LONG" else "📉")} Позиция открыта\n\n"
+                        f"• Токен: {signal.symbol.split("-", 1)[0].upper()}\n"
                         f"• Направление: {position_side}\n"
-                        f"• Исполнено: {partial_qty:.2f}\n"
-                        f"• Цена входа: {partial_fill_price:.8f}\n"
-                        f"• Таймер: {runtime.limit_open_timeout_sec}s\n"
-                        f"• Действие: остаток ордера отменен"
+                        f"• Размер: {partial_qty:.2f}\n"
+                        f"• Маржа: {("None" if partial_margin is None else f"{partial_margin:.8f}".rstrip("0").rstrip("."))} USDT\n"
+                        f"• Цена открытия: {partial_fill_price:.8f}\n"
+                        f"• Остаток: отменен по таймеру {runtime.limit_open_timeout_sec}s"
                     )
                     await self._publish_open_message(runtime, opened.symbol, opened.direction, opened.size, opened.margin_usdt, opened.entry_price)
                     LOGGER.info(
@@ -203,7 +203,7 @@ class Trader:
                     return ExecuteResult(status="submitted", detail="limit_partially_filled_timeout_cancelled")
                 await self._notify_status(
                     f"🟡 Лимитка не исполнилась\n\n"
-                    f"• Токен: {signal.symbol.split('-', 1)[0].upper()}\n"
+                    f"• Токен: {signal.symbol.split("-", 1)[0].upper()}\n"
                     f"• Направление: {position_side}\n"
                     f"• Размер: {quantity:.2f}\n"
                     f"• Цена лимитки: {limit_price:.8f}\n"

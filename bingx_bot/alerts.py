@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -209,18 +209,18 @@ class SpreadAlertManager:
         max_size_usd: float | None,
         profile_name: str,
     ) -> str:
-        direction_line = "LONG 🟢" if direction == "LONG" else "SHORT 🔴"
+        direction_line = "LONG рџџў" if direction == "LONG" else "SHORT рџ”ґ"
         max_size_line = f"${max_size_usd:.0f}" if max_size_usd is not None else "N/A"
         fair_label_pretty = "MARK_PRICE" if profile_name == "mark" else "INDEX_PRICE"
         return (
-            f"🚨 SPREAD ALERT!  🏷️ Level {level} \n\n"
-            f"💎 Token:  {token}\n\n\n"
-            f"🧭 Direction:  {direction_line}\n"
-            f"🧮 Spread:     +{spread_pct:.2f}% \n\n"
-            f"💰 LAST_PRICE:  {SpreadAlertManager._format_price(last_price)} \n"
-            f"🏦 {fair_label_pretty}:   {SpreadAlertManager._format_price(fair_price)} \n\n"
-            f"💵 MAX SIZE USD:  {max_size_line}\n\n\n"
-            f"🕐 {SpreadAlertManager._timestamp_line()}"
+            f"рџљЁ SPREAD ALERT!  рџЏ·пёЏ Level {level} \n\n"
+            f"рџ’Ћ Token:  {token}\n\n\n"
+            f"рџ§­ Direction:  {direction_line}\n"
+            f"рџ§® Spread:     +{spread_pct:.2f}% \n\n"
+            f"рџ’° LAST_PRICE:  {SpreadAlertManager._format_price(last_price)} \n"
+            f"рџЏ¦ {fair_label_pretty}:   {SpreadAlertManager._format_price(fair_price)} \n\n"
+            f"рџ’µ MAX SIZE USD:  {max_size_line}\n\n\n"
+            f"рџ•ђ {SpreadAlertManager._timestamp_line()}"
         )
 
     @staticmethod
@@ -236,38 +236,38 @@ class SpreadAlertManager:
         pnl_pct: float,
         stats_summary: str,
     ) -> str:
-        direction_line = "LONG 🟢" if direction == "LONG" else "SHORT 🔴"
+        direction_line = "LONG рџџў" if direction == "LONG" else "SHORT рџ”ґ"
         pnl_sign = "+" if pnl_pct >= 0 else ""
         fair_label_pretty = fair_label
         return (
-            "✅ SPREAD ALIGNED! \n\n"
-            f"💎 Token: {token}\n\n\n"
-            f"🧭 Direction: {direction_line}\n"
-            f"🧮 Spread: +{spread_pct:.2f}%\n\n"
-            f"💰 LAST_PRICE Now: {SpreadAlertManager._format_price(last_now)} \n"
-            f"💰 LAST_PRICE Entry: {SpreadAlertManager._format_price(last_entry)}\n"
-            f"💰 {fair_label_pretty} Now: {SpreadAlertManager._format_price(fair_now)}\n"
-            f"💰 {fair_label_pretty} Entry: {SpreadAlertManager._format_price(fair_entry)}\n\n\n"
-            f"💵 PNL: {pnl_sign}{pnl_pct:.2f}%\n\n"
+            "вњ… SPREAD ALIGNED! \n\n"
+            f"рџ’Ћ Token: {token}\n\n\n"
+            f"рџ§­ Direction: {direction_line}\n"
+            f"рџ§® Spread: +{spread_pct:.2f}%\n\n"
+            f"рџ’° LAST_PRICE Now: {SpreadAlertManager._format_price(last_now)} \n"
+            f"рџ’° LAST_PRICE Entry: {SpreadAlertManager._format_price(last_entry)}\n"
+            f"рџ’° {fair_label_pretty} Now: {SpreadAlertManager._format_price(fair_now)}\n"
+            f"рџ’° {fair_label_pretty} Entry: {SpreadAlertManager._format_price(fair_entry)}\n\n\n"
+            f"рџ’µ PNL: {pnl_sign}{pnl_pct:.2f}%\n\n"
             f"{stats_summary}\n"
-            f"🕐 {SpreadAlertManager._timestamp_line()}"
+            f"рџ•ђ {SpreadAlertManager._timestamp_line()}"
         )
 
     @staticmethod
     def _format_close_message(trade: ClosedTrade) -> str:
         status_icon = "🟢" if trade.pnl_usdt >= 0 else "🔴"
+        trend_icon = "📈" if trade.direction == "LONG" else "📉"
         token = SpreadAlertManager._token(trade.symbol)
         margin_text = "None" if trade.margin_usdt is None else f"{trade.margin_usdt:.8f}".rstrip("0").rstrip(".")
         pnl_sign = "+" if trade.pnl_usdt >= 0 else ""
         return (
-            f"{status_icon} Позиция закрыта\n\n"
+            f"{trend_icon} {status_icon} Позиция закрыта\n\n"
             f"• Токен: {token}\n"
             f"• Направление: {trade.direction}\n"
             f"• Размер: {trade.size:.2f}\n"
             f"• Маржа: {margin_text} USDT\n"
             f"• PnL: {pnl_sign}{trade.pnl_usdt:.2f} USDT"
         )
-
     @staticmethod
     def _calc_pnl_pct(direction: str, entry_last_price: float, last_now: float) -> float:
         if direction == "LONG":
