@@ -506,6 +506,7 @@ class Trader:
             f"• Цена открытия: {entry_price:.8f}"
         )
         LOGGER.info("%s", text)
+        await self._notify_status(text)
         if self.notifier is None:
             return
         channels = tuple(sorted(set(runtime.index_alerts.channels + runtime.mark_alerts.channels)))
