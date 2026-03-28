@@ -77,6 +77,9 @@ class ControlBot(AlertPublisher):
         for item in self.settings.telegram_admin_ids:
             if item not in targets:
                 targets.append(item)
+        if not targets:
+            LOGGER.warning("notify_status skipped: no telegram targets configured")
+            return
         for target in targets:
             try:
                 await self.client.send_message(target, text)
@@ -129,7 +132,11 @@ class ControlBot(AlertPublisher):
             await self._edit(event, self._fmt_positions(await self.trader.list_active_positions()), self._auto_menu()); return True
         if data == "action:auto_close_all":
             if not self.trader: await self._edit(event, "Трейдер не готов", self._auto_menu()); return True
-            await self._edit(event, self._fmt_close_all(await self.trader.close_all_positions()), self._auto_menu()); return True
+            result = await self.trader.close_all_positions()
+            text = self._fmt_close_all(result)
+            await self._edit(event, text, self._auto_menu())
+            await self.notify_status(text)
+            return True
         if data == "show:auto_trade_history":
             await self._edit(event, self.trade_history.format_recent(limit=30), self._auto_menu()); return True
         if data == "toggle:auto_enabled":
@@ -774,8 +781,27 @@ class ControlBot(AlertPublisher):
     @staticmethod
     def _fmt_positions(items: list[ActivePosition]) -> str:
         if not items:
-            return "Нет открытых позиций"
-        return "\n".join([f"• {x.symbol} {x.direction} qty={x.size:.2f}" for x in items[:30]])
+            return "📦 Активные позиции:\n\nПока нет открытых позиций."
+        lines = ["📦 Активные позиции:\n"]
+        for item in items[:30]:
+            trend_icon = "📈" if item.direction == "LONG" else "📉"
+            pnl_value = item.unrealized_pnl_usdt or 0.0
+            result_icon = "🟢" if pnl_value >= 0 else "🔴"
+            margin_text = "None" if item.margin_usdt is None else f"{item.margin_usdt:.2f}"
+            pnl_sign = "+" if pnl_value >= 0 else ""
+            pnl_pct = 0.0
+            if item.margin_usdt and item.margin_usdt > 0:
+                pnl_pct = (pnl_value / item.margin_usdt) * 100.0
+            pct_sign = "+" if pnl_pct >= 0 else ""
+            token = item.symbol.split("-", 1)[0].upper()
+            lines.append(f"{trend_icon} {result_icon} {token}")
+            lines.append(f"  • Направление: {item.direction}")
+            lines.append(f"  • Размер: {item.size:.2f}")
+            lines.append(f"  • Цена открытия: {item.entry_price:.8f}" if item.entry_price is not None else "  • Цена открытия: None")
+            lines.append(f"  • Текущая цена: {item.mark_price:.8f}" if item.mark_price is not None else "  • Текущая цена: None")
+            lines.append(f"  • Маржа: {margin_text} USDT")
+            lines.append(f"  • PnL: {pnl_sign}{pnl_value:.2f} USDT ({pct_sign}{pnl_pct:.2f}%)\n")
+        return "\n".join(lines).rstrip()
 
     @staticmethod
     def _fmt_timers(items: list[PendingLimitOrder]) -> str:
@@ -792,8 +818,14 @@ class ControlBot(AlertPublisher):
 
     @staticmethod
     def _fmt_close_all(result: CloseAllResult) -> str:
-        lines = [f"Попыток={result.attempted} Успешно={result.closed} Ошибок={result.failed}"]
+        lines = [
+            "❌ Закрыть все позиции\n",
+            f"• Попыток: {result.attempted}",
+            f"• Успешно: {result.closed}",
+            f"• Ошибок: {result.failed}",
+        ]
         if result.errors:
+            lines.append("")
             lines.extend([f"• {e}" for e in result.errors[:5]])
         return "\n".join(lines)
 

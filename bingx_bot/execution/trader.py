@@ -141,11 +141,12 @@ class Trader:
         await self.client.set_leverage(signal.symbol, runtime.leverage, position_side)
         limit_price = None
         if runtime.order_type == "LIMIT":
-            raw_limit_price = self._calculate_limit_price(signal.side, live_last, runtime.limit_open_offset_pct)
+            open_reference_price = signal.last_price or live_last
+            raw_limit_price = self._calculate_limit_price(signal.side, open_reference_price, runtime.limit_open_offset_pct)
             limit_price = rules.normalize_price(raw_limit_price, order_side)
             validation_errors = rules.validate_order(
                 quantity=quantity,
-                reference_price=live_last,
+                reference_price=open_reference_price,
                 price=limit_price,
             )
             if validation_errors:
