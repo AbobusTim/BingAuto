@@ -55,14 +55,18 @@ class StrategyEngine:
             return
 
         if self.cooldown_guard.blocks(signal):
-            LOGGER.info("Cooldown signal ignored | %s %s", signal.symbol, signal.side.value)
-            await self._notify_skip(
-                f"⏱ Сигнал пропущен\n\n"
-                f"• Токен: {signal.symbol}\n"
-                f"• Направление: {signal.side.value}\n"
-                f"• Причина: cooldown"
-            )
-            return
+            direction = "LONG" if signal.side.value == "BUY" else "SHORT"
+            if not await self.trader.has_active_position(signal.symbol, direction):
+                LOGGER.info("Cooldown bypassed because no active position exists | %s %s", signal.symbol, signal.side.value)
+            else:
+                LOGGER.info("Cooldown signal ignored | %s %s", signal.symbol, signal.side.value)
+                await self._notify_skip(
+                    f"⏱ Сигнал пропущен\n\n"
+                    f"• Токен: {signal.symbol}\n"
+                    f"• Направление: {signal.side.value}\n"
+                    f"• Причина: cooldown"
+                )
+                return
 
         LOGGER.info("Signal approved for execution | %s %s", signal.symbol, signal.side.value)
         result = await self.trader.execute(signal)

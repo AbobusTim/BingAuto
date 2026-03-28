@@ -271,6 +271,12 @@ class Trader:
             )
         return items
 
+    async def has_active_position(self, symbol: str, direction: str) -> bool:
+        items = await self.list_active_positions()
+        symbol_upper = symbol.upper()
+        direction_upper = direction.upper()
+        return any(item.symbol == symbol_upper and item.direction == direction_upper and item.size > 0 for item in items)
+
     async def close_all_positions(self) -> CloseAllResult:
         runtime = self.runtime_store.load()
         if not self._apply_active_credentials(runtime):
