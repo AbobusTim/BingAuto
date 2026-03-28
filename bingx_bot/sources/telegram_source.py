@@ -208,6 +208,8 @@ class TelegramSignalSource:
 
     def _parse_aligned_message(self, text: str) -> tuple[str, str, float | None] | None:
         upper = text.upper()
+        if "СОШ" not in upper and "ALIGNED" not in upper:
+            return None
         symbol_match = ALIGNED_SYMBOL_PATTERN.search(upper)
         if not symbol_match:
             return None
