@@ -55,6 +55,7 @@ class RuntimeTradingSettings:
     blacklist: frozenset[str]
     accounts: tuple[TradingAccount, ...]
     primary_account_id: str | None
+    notification_chat_id: int | None
     index_alerts: AlertProfile
     mark_alerts: AlertProfile
     parser_telegram_channel: str
@@ -108,6 +109,7 @@ class RuntimeSettingsStore:
             "blacklist": sorted(runtime.blacklist),
             "accounts": [self._account_to_payload(item) for item in runtime.accounts],
             "primary_account_id": runtime.primary_account_id,
+            "notification_chat_id": runtime.notification_chat_id,
             "index_alerts": self._profile_to_payload(runtime.index_alerts),
             "mark_alerts": self._profile_to_payload(runtime.mark_alerts),
             "parser_telegram_channel": runtime.parser_telegram_channel,
@@ -134,6 +136,7 @@ class RuntimeSettingsStore:
             "blacklist": sorted(current.blacklist),
             "accounts": [self._account_to_payload(item) for item in current.accounts],
             "primary_account_id": current.primary_account_id,
+            "notification_chat_id": current.notification_chat_id,
             "index_alerts": self._profile_to_payload(current.index_alerts),
             "mark_alerts": self._profile_to_payload(current.mark_alerts),
             "parser_telegram_channel": current.parser_telegram_channel,
@@ -177,6 +180,7 @@ class RuntimeSettingsStore:
             blacklist=frozenset(),
             accounts=accounts,
             primary_account_id=accounts[0].account_id if accounts else None,
+            notification_chat_id=None,
             index_alerts=self._default_alert_profile(),
             mark_alerts=self._default_alert_profile(),
             parser_telegram_channel=self.settings.telegram_channel,
@@ -220,6 +224,9 @@ class RuntimeSettingsStore:
 
         if primary_account_id and not any(item.account_id == primary_account_id for item in accounts):
             primary_account_id = accounts[0].account_id if accounts else None
+        notification_chat_id = payload.get("notification_chat_id")
+        if notification_chat_id is not None:
+            notification_chat_id = int(notification_chat_id)
 
         return RuntimeTradingSettings(
             enabled=bool(payload.get("enabled", True)),
@@ -237,6 +244,7 @@ class RuntimeSettingsStore:
             blacklist=blacklist,
             accounts=accounts,
             primary_account_id=primary_account_id,
+            notification_chat_id=notification_chat_id,
             index_alerts=self._profile_from_payload(payload.get("index_alerts")),
             mark_alerts=self._profile_from_payload(payload.get("mark_alerts")),
             parser_telegram_channel=str(payload.get("parser_telegram_channel", self.settings.telegram_channel)).strip(),

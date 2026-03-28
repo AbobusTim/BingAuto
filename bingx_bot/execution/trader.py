@@ -258,7 +258,6 @@ class Trader:
                     order_type=order_type,
                     quantity=pos.size,
                     price=limit_price,
-                    reduce_only=True,
                 )
                 if order_type == "LIMIT":
                     await self._cancel_close_limit_if_timed_out(
@@ -389,7 +388,6 @@ class Trader:
                 order_type="LIMIT",
                 quantity=total_qty,
                 price=limit_price,
-                reduce_only=True,
             )
             LOGGER.info(
                 "Aligned close LIMIT placed | symbol=%s dir=%s side=%s qty=%.12g ref=%.12g limit=%.12g",
@@ -415,7 +413,6 @@ class Trader:
             position_side=direction,
             order_type="MARKET",
             quantity=total_qty,
-            reduce_only=True,
         )
         LOGGER.info(
             "Aligned close MARKET placed | symbol=%s dir=%s side=%s qty=%.12g",
@@ -679,9 +676,6 @@ class Trader:
             order_type = str(item.get("type", item.get("orderType", ""))).upper()
             if order_type != "LIMIT":
                 continue
-            reduce_only = str(item.get("reduceOnly", "false")).lower() in {"true", "1", "yes"}
-            if not reduce_only:
-                continue
             if not self._is_same_order(item, side, position_side, price):
                 continue
             order_id = self._extract_order_id(item)
@@ -705,7 +699,6 @@ class Trader:
                 position_side=position_side,
                 order_type="MARKET",
                 quantity=cancelled_qty,
-                reduce_only=True,
             )
             LOGGER.info(
                 "CLOSE LIMIT timeout fallback -> MARKET executed | symbol=%s side=%s pos=%s qty=%.12g cancelled=%s",

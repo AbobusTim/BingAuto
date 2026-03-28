@@ -71,6 +71,9 @@ class ControlBot(AlertPublisher):
         targets: list[int] = []
         if self.last_active_user_id is not None:
             targets.append(self.last_active_user_id)
+        runtime = self.runtime_store.load()
+        if runtime.notification_chat_id is not None and runtime.notification_chat_id not in targets:
+            targets.append(runtime.notification_chat_id)
         for item in self.settings.telegram_admin_ids:
             if item not in targets:
                 targets.append(item)
@@ -87,6 +90,7 @@ class ControlBot(AlertPublisher):
                 return
             if event.sender_id is not None:
                 self.last_active_user_id = event.sender_id
+                self.runtime_store.update(notification_chat_id=event.sender_id)
             if await self._consume_pending(event):
                 return
             await event.respond("Панель управления", buttons=self._main_menu())
@@ -99,6 +103,7 @@ class ControlBot(AlertPublisher):
                 return
             if sender_id is not None:
                 self.last_active_user_id = sender_id
+                self.runtime_store.update(notification_chat_id=sender_id)
             try:
                 # Acknowledge the callback immediately so Telegram buttons feel responsive
                 # even if the following handler needs a file write or network request.
