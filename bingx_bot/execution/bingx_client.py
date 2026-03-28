@@ -8,6 +8,10 @@ from urllib.parse import urlencode
 import httpx
 
 
+class BingXAPIError(RuntimeError):
+    pass
+
+
 class BingXClient:
     def __init__(self, base_url: str, api_key: str, secret_key: str) -> None:
         self.base_url = base_url.rstrip("/")
@@ -136,6 +140,7 @@ class BingXClient:
         response = await self.client.get(f"{self.base_url}{path}", params=params)
         response.raise_for_status()
         payload = response.json()
+        self._raise_for_api_error(payload)
         return payload.get("data", payload)
 
     async def _signed_post(self, path: str, params: dict) -> dict:
@@ -154,6 +159,7 @@ class BingXClient:
         )
         response.raise_for_status()
         payload = response.json()
+        self._raise_for_api_error(payload)
         return payload.get("data", payload)
 
     async def _signed_get(self, path: str, params: dict) -> dict | list[dict]:
@@ -172,6 +178,7 @@ class BingXClient:
         )
         response.raise_for_status()
         result = response.json()
+        self._raise_for_api_error(result)
         return result.get("data", result)
 
     async def _signed_delete(self, path: str, params: dict) -> dict:
@@ -191,7 +198,24 @@ class BingXClient:
         )
         response.raise_for_status()
         result = response.json()
+        self._raise_for_api_error(result)
         return result.get("data", result)
+
+    @staticmethod
+    def _raise_for_api_error(payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        raw_code = payload.get("code")
+        if raw_code in (None, "", 0, "0"):
+            return
+        try:
+            code_int = int(raw_code)
+        except (TypeError, ValueError):
+            return
+        if code_int == 0:
+            return
+        message = str(payload.get("msg", payload.get("message", "Unknown BingX API error")))
+        raise BingXAPIError(f"BingX API error {code_int}: {message}")
 
     @staticmethod
     def _format_number(value: float) -> str:
