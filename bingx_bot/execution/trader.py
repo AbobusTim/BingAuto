@@ -171,6 +171,36 @@ class Trader:
                 timeout_sec=runtime.limit_open_timeout_sec,
             )
             if not open_result["filled"]:
+                partial_qty = float(open_result["filled_qty"] or 0.0)
+                partial_fill_price = float(open_result["fill_price"] or 0.0) if open_result["fill_price"] is not None else None
+                partial_margin = float(open_result["margin_usdt"] or 0.0) if open_result["margin_usdt"] is not None else None
+                if partial_qty > 0 and partial_fill_price is not None:
+                    opened = self.trade_history.record_open(
+                        symbol=signal.symbol,
+                        direction=position_side,
+                        size=partial_qty,
+                        margin_usdt=partial_margin,
+                        entry_price=partial_fill_price,
+                    )
+                    await self._notify_status(
+                        f"🟡 Лимитка частично исполнилась\n\n"
+                        f"• Токен: {signal.symbol.split('-', 1)[0].upper()}\n"
+                        f"• Направление: {position_side}\n"
+                        f"• Исполнено: {partial_qty:.2f}\n"
+                        f"• Цена входа: {partial_fill_price:.8f}\n"
+                        f"• Таймер: {runtime.limit_open_timeout_sec}s\n"
+                        f"• Действие: остаток ордера отменен"
+                    )
+                    await self._publish_open_message(runtime, opened.symbol, opened.direction, opened.size, opened.margin_usdt, opened.entry_price)
+                    LOGGER.info(
+                        "OPEN LIMIT partially filled before timeout | symbol=%s direction=%s filled_qty=%s fill_price=%s timeout=%ss",
+                        signal.symbol,
+                        position_side,
+                        partial_qty,
+                        partial_fill_price,
+                        runtime.limit_open_timeout_sec,
+                    )
+                    return ExecuteResult(status="submitted", detail="limit_partially_filled_timeout_cancelled")
                 await self._notify_status(
                     f"🟡 Лимитка не исполнилась\n\n"
                     f"• Токен: {signal.symbol.split('-', 1)[0].upper()}\n"
@@ -585,29 +615,56 @@ class Trader:
     ) -> dict[str, float | bool | None]:
         immediate_fill_price = self._extract_filled_price(order_response)
         if immediate_fill_price is not None:
-            return {"filled": True, "fill_price": immediate_fill_price}
+            return {"filled": True, "fill_price": immediate_fill_price, "filled_qty": None, "margin_usdt": None}
 
         order_id = self._extract_order_id(order_response)
         if timeout_sec <= 0:
             if await self._is_order_open(symbol, order_id, side, position_side, price):
                 await self._cancel_order_safe(symbol, order_id, side, position_side, price, "OPEN")
-                return {"filled": False, "fill_price": None}
-            fill_price = await self._detect_position_fill_price(symbol, position_side)
-            return {"filled": fill_price is not None, "fill_price": fill_price}
+                position = await self._detect_open_position(symbol, position_side)
+                return {
+                    "filled": False,
+                    "fill_price": position.entry_price if position else None,
+                    "filled_qty": position.size if position else None,
+                    "margin_usdt": position.margin_usdt if position else None,
+                }
+            position = await self._detect_open_position(symbol, position_side)
+            return {
+                "filled": position is not None,
+                "fill_price": position.entry_price if position else None,
+                "filled_qty": position.size if position else None,
+                "margin_usdt": position.margin_usdt if position else None,
+            }
 
         deadline = asyncio.get_running_loop().time() + timeout_sec
         while asyncio.get_running_loop().time() < deadline:
             if not await self._is_order_open(symbol, order_id, side, position_side, price):
-                fill_price = await self._detect_position_fill_price(symbol, position_side)
-                return {"filled": fill_price is not None, "fill_price": fill_price}
+                position = await self._detect_open_position(symbol, position_side)
+                return {
+                    "filled": position is not None,
+                    "fill_price": position.entry_price if position else None,
+                    "filled_qty": position.size if position else None,
+                    "margin_usdt": position.margin_usdt if position else None,
+                }
             await asyncio.sleep(0.5)
 
         if await self._is_order_open(symbol, order_id, side, position_side, price):
             await self._cancel_order_safe(symbol, order_id, side, position_side, price, "OPEN")
-            return {"filled": False, "fill_price": None}
+            position = await self._detect_open_position(symbol, position_side)
+            return {
+                "filled": False,
+                "fill_price": position.entry_price if position else None,
+                "filled_qty": position.size if position else None,
+                "margin_usdt": position.margin_usdt if position else None,
+            }
 
-        fill_price = await self._detect_position_fill_price(symbol, position_side)
-        return {"filled": fill_price is not None, "fill_price": fill_price}
+        position = await self._detect_open_position(symbol, position_side)
+        return {
+            "filled": position is not None,
+            "fill_price": position.entry_price if position else None,
+            "filled_qty": position.size if position else None,
+            "margin_usdt": position.margin_usdt if position else None,
+        }
 
     async def _cancel_close_limit_if_timed_out(
         self,
@@ -639,6 +696,10 @@ class Trader:
         return False
 
     async def _detect_position_fill_price(self, symbol: str, position_side: str) -> float | None:
+        position = await self._detect_open_position(symbol, position_side)
+        return position.entry_price if position else None
+
+    async def _detect_open_position(self, symbol: str, position_side: str) -> ActivePosition | None:
         rows = await self.client.get_open_positions(symbol)
         for raw in rows:
             payload_symbol = str(raw.get("symbol", "")).upper()
@@ -650,7 +711,15 @@ class Trader:
             qty = self._pick_abs_float(raw, "positionAmt", "positionQty", "positionAmount", "positionSize", "amount")
             if qty <= 0:
                 continue
-            return self._pick_float(raw, "avgPrice", "avgOpenPrice", "entryPrice", "openPrice")
+            return ActivePosition(
+                symbol=symbol,
+                direction=direction,
+                size=qty,
+                entry_price=self._pick_float(raw, "avgPrice", "avgOpenPrice", "entryPrice", "openPrice"),
+                mark_price=self._pick_float(raw, "markPrice"),
+                margin_usdt=self._pick_float(raw, "positionMargin", "isolatedMargin", "margin"),
+                unrealized_pnl_usdt=self._pick_float(raw, "unrealizedProfit", "unRealizedProfit", "unPnl"),
+            )
         return None
 
     async def _cancel_order_safe(
