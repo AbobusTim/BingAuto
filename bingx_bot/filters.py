@@ -21,11 +21,14 @@ class DuplicateGuard:
 
     def is_duplicate(self, signal: Signal) -> bool:
         self._evict_expired()
-        now = time.time()
         if signal.dedupe_key in self._seen:
             return True
-        self._seen[signal.dedupe_key] = now + self.ttl_seconds
         return False
+
+    def mark(self, signal: Signal) -> None:
+        self._evict_expired()
+        now = time.time()
+        self._seen[signal.dedupe_key] = now + self.ttl_seconds
 
     def _evict_expired(self) -> None:
         now = time.time()
@@ -46,8 +49,13 @@ class CooldownGuard:
         active_until = self._active_until.get(key)
         if active_until and active_until > now:
             return True
-        self._active_until[key] = now + self.cooldown_seconds
         return False
+
+    def mark(self, signal: Signal) -> None:
+        self._evict_expired()
+        key = f"{signal.symbol}:{signal.side}"
+        now = time.time()
+        self._active_until[key] = now + self.cooldown_seconds
 
     def _evict_expired(self) -> None:
         now = time.time()

@@ -47,4 +47,7 @@ class StrategyEngine:
             return
 
         LOGGER.info("Signal approved for execution | %s %s", signal.symbol, signal.side.value)
-        await self.trader.execute(signal)
+        result = await self.trader.execute(signal)
+        if result.status == "submitted":
+            self.duplicate_guard.mark(signal)
+            self.cooldown_guard.mark(signal)

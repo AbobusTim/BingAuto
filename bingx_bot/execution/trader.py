@@ -18,6 +18,12 @@ LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
+class ExecuteResult:
+    status: str
+    detail: str | None = None
+
+
+@dataclass(slots=True)
 class ActivePosition:
     symbol: str
     direction: str
@@ -68,7 +74,7 @@ class Trader:
         self.trade_history = trade_history
         self.notifier = notifier
 
-    async def execute(self, signal: Signal) -> None:
+    async def execute(self, signal: Signal) -> ExecuteResult:
         runtime = self.runtime_store.load()
         if not runtime.enabled:
             LOGGER.info("Trading disabled in runtime settings")
@@ -77,7 +83,7 @@ class Trader:
                 f"• Сигнал: {signal.symbol} {signal.side.value}\n"
                 f"• Причина: trading disabled"
             )
-            return
+            return ExecuteResult(status="skipped_disabled", detail="trading disabled")
         if not self._apply_active_credentials(runtime):
             LOGGER.warning("No primary trading account configured, order skipped")
             await self._notify_status(
@@ -85,7 +91,7 @@ class Trader:
                 f"• Сигнал: {signal.symbol} {signal.side.value}\n"
                 f"• Причина: не выбран основной аккаунт"
             )
-            return
+            return ExecuteResult(status="skipped_no_account", detail="no primary account")
 
         order_side, position_side = self._resolve_order_params(signal.side)
         quote_size = runtime.quote_size
@@ -128,7 +134,7 @@ class Trader:
                 f"• Плечо: x{runtime.leverage}\n"
                 f"• Кол-во: {quantity:.6f}"
             )
-            return
+            return ExecuteResult(status="skipped_dry_run", detail="dry run")
 
         live_last = await self._fetch_live_price(signal.symbol)
         await self.client.set_margin_type(signal.symbol, runtime.margin_type)
@@ -179,6 +185,7 @@ class Trader:
             response,
         )
         await self._publish_open_message(runtime, opened.symbol, opened.direction, opened.size, opened.margin_usdt, opened.entry_price)
+        return ExecuteResult(status="submitted", detail=runtime.order_type)
 
     async def list_active_positions(self) -> list[ActivePosition]:
         runtime = self.runtime_store.load()
