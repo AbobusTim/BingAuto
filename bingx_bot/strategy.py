@@ -36,14 +36,32 @@ class StrategyEngine:
         runtime = self.runtime_store.load()
         if runtime.blacklist_enabled and signal.symbol.upper() in runtime.blacklist:
             LOGGER.info("Symbol in blacklist, signal ignored for execution | %s", signal.symbol)
+            await self._notify_skip(
+                f"🚫 Сигнал пропущен\n\n"
+                f"• Токен: {signal.symbol}\n"
+                f"• Направление: {signal.side.value}\n"
+                f"• Причина: токен в blacklist"
+            )
             return
 
         if self.duplicate_guard.is_duplicate(signal):
             LOGGER.info("Duplicate signal ignored | %s %s", signal.symbol, signal.side.value)
+            await self._notify_skip(
+                f"♻️ Сигнал пропущен\n\n"
+                f"• Токен: {signal.symbol}\n"
+                f"• Направление: {signal.side.value}\n"
+                f"• Причина: duplicate"
+            )
             return
 
         if self.cooldown_guard.blocks(signal):
             LOGGER.info("Cooldown signal ignored | %s %s", signal.symbol, signal.side.value)
+            await self._notify_skip(
+                f"⏱ Сигнал пропущен\n\n"
+                f"• Токен: {signal.symbol}\n"
+                f"• Направление: {signal.side.value}\n"
+                f"• Причина: cooldown"
+            )
             return
 
         LOGGER.info("Signal approved for execution | %s %s", signal.symbol, signal.side.value)
@@ -51,3 +69,9 @@ class StrategyEngine:
         if result.status == "submitted":
             self.duplicate_guard.mark(signal)
             self.cooldown_guard.mark(signal)
+
+    async def _notify_skip(self, text: str) -> None:
+        notify = getattr(self.trader, "_notify_status", None)
+        if notify is None:
+            return
+        await notify(text)
