@@ -72,9 +72,19 @@ class Trader:
         runtime = self.runtime_store.load()
         if not runtime.enabled:
             LOGGER.info("Trading disabled in runtime settings")
+            await self._notify_status(
+                f"⛔ Автовход отключен\n\n"
+                f"• Сигнал: {signal.symbol} {signal.side.value}\n"
+                f"• Причина: trading disabled"
+            )
             return
         if not self._apply_active_credentials(runtime):
             LOGGER.warning("No primary trading account configured, order skipped")
+            await self._notify_status(
+                f"⛔ Сделка пропущена\n\n"
+                f"• Сигнал: {signal.symbol} {signal.side.value}\n"
+                f"• Причина: не выбран основной аккаунт"
+            )
             return
 
         order_side, position_side = self._resolve_order_params(signal.side)
@@ -109,6 +119,14 @@ class Trader:
                 rules.qty_step,
                 rules.min_qty,
                 rules.min_notional,
+            )
+            await self._notify_status(
+                f"🧪 Dry Run\n\n"
+                f"• Сигнал: {signal.symbol} {signal.side.value}\n"
+                f"• Ордер: {runtime.order_type}\n"
+                f"• Margin: {runtime.margin_type}\n"
+                f"• Плечо: x{runtime.leverage}\n"
+                f"• Кол-во: {quantity:.6f}"
             )
             return
 
@@ -484,6 +502,14 @@ class Trader:
         if not channels:
             return
         await self.notifier.publish_to_channels(channels, text)
+
+    async def _notify_status(self, text: str) -> None:
+        if self.notifier is None:
+            return
+        notify = getattr(self.notifier, "notify_status", None)
+        if notify is None:
+            return
+        await notify(text)
 
     @staticmethod
     def _pick_float(payload: dict, *keys: str) -> float | None:

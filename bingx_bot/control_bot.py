@@ -46,6 +46,7 @@ class ControlBot(AlertPublisher):
         self.pending: dict[int, PendingInput] = {}
         self.account_drafts: dict[int, dict[str, str]] = {}
         self.parse_drafts: dict[int, dict[str, str]] = {}
+        self.last_active_user_id: int | None = None
         self.client = TelegramClient(settings.telegram_bot_session, settings.telegram_api_id, settings.telegram_api_hash)
 
     async def run(self) -> None:
@@ -64,11 +65,28 @@ class ControlBot(AlertPublisher):
             except Exception:
                 LOGGER.exception("send failed: %s", channel)
 
+    async def notify_status(self, text: str) -> None:
+        if not self.client.is_connected():
+            return
+        targets: list[int] = []
+        if self.last_active_user_id is not None:
+            targets.append(self.last_active_user_id)
+        for item in self.settings.telegram_admin_ids:
+            if item not in targets:
+                targets.append(item)
+        for target in targets:
+            try:
+                await self.client.send_message(target, text)
+            except Exception:
+                LOGGER.exception("status notify failed: %s", target)
+
     def _register_handlers(self) -> None:
         @self.client.on(events.NewMessage())
         async def on_msg(event: events.NewMessage.Event) -> None:
             if not self._is_allowed(event.sender_id):
                 return
+            if event.sender_id is not None:
+                self.last_active_user_id = event.sender_id
             if await self._consume_pending(event):
                 return
             await event.respond("Панель управления", buttons=self._main_menu())
@@ -79,6 +97,8 @@ class ControlBot(AlertPublisher):
             if not self._is_allowed(sender_id):
                 await event.answer("Not allowed", alert=True)
                 return
+            if sender_id is not None:
+                self.last_active_user_id = sender_id
             try:
                 # Acknowledge the callback immediately so Telegram buttons feel responsive
                 # even if the following handler needs a file write or network request.
