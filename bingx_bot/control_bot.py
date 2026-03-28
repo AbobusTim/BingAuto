@@ -486,11 +486,11 @@ class ControlBot(AlertPublisher):
     def _auto_status(self, runtime) -> str:
         primary = runtime.primary_account().title if runtime.primary_account() else "Не выбран"
         return (
-            f"Margin Type: {runtime.margin_type}\n"
             f"🤖 Auto Entry\n\n"
             f"• Enabled: {runtime.enabled}\n"
             f"• Dry Run: {runtime.dry_run}\n"
             f"• Order Type: {runtime.order_type}\n"
+            f"• Margin Type: {runtime.margin_type}\n"
             f"• Size: {runtime.quote_size} USDT\n"
             f"• Leverage: x{runtime.leverage}\n"
             f"• Open Limit Slippage: {runtime.limit_open_offset_pct * 100:.2f}%\n"
@@ -502,10 +502,10 @@ class ControlBot(AlertPublisher):
 
     def _params_text(self, runtime) -> str:
         return (
-            f"Margin Type: {runtime.margin_type}\n"
             f"⚙️ Параметры\n\n"
             f"• Order Type: {runtime.order_type}\n"
             f"• Size: {runtime.quote_size} USDT\n"
+            f"• Margin Type: {runtime.margin_type}\n"
             f"• Leverage: x{runtime.leverage}\n"
             f"• Open Limit Slippage: {runtime.limit_open_offset_pct * 100:.2f}%\n"
             f"• Close Limit Slippage: {runtime.limit_close_offset_pct * 100:.2f}%\n"
@@ -788,7 +788,7 @@ class ControlBot(AlertPublisher):
 
     def _params_menu(self):
         return [
-            [Button.inline("ISOLATED", b"set:auto_margin:ISOLATED"), Button.inline("CROSSED", b"set:auto_margin:CROSSED")],
+            [Button.inline("🧱 ISOLATED", b"set:auto_margin:ISOLATED"), Button.inline("🌐 CROSSED", b"set:auto_margin:CROSSED")],
             [Button.inline("🟡 MARKET", b"set:auto_order:MARKET"), Button.inline("🔵 LIMIT", b"set:auto_order:LIMIT")],
             [Button.inline("💵 Размер USDT", b"prompt:auto_quote_size"), Button.inline("🧲 Плечо", b"prompt:auto_leverage")],
             [Button.inline("↗️ Slip OPEN LIMIT %", b"prompt:auto_limit_open_offset"), Button.inline("↘️ Slip CLOSE LIMIT %", b"prompt:auto_limit_close_offset")],
