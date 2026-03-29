@@ -13,7 +13,7 @@ from telethon.sessions import MemorySession, StringSession
 
 from bingx_bot.alerts import AlertPublisher
 from bingx_bot.config import Settings
-from bingx_bot.runtime_settings import AlertProfile, ParserTelegramAccount, RuntimeSettingsStore, TradingAccount
+from bingx_bot.runtime_settings import AlertProfile, OpenLimitSlippageTier, ParserTelegramAccount, RuntimeSettingsStore, TradingAccount
 from bingx_bot.stats import AlertStatsStore
 from bingx_bot.trade_history import TradeHistoryStore
 
@@ -164,6 +164,17 @@ class ControlBot(AlertPublisher):
             return await self._ask(event, sender_id, "auto:limit_open_timeout_sec", "menu:auto_params", "Таймер OPEN (сек). Пример: 120")
         if data == "prompt:auto_limit_close_timeout":
             return await self._ask(event, sender_id, "auto:limit_close_timeout_sec", "menu:auto_params", "Таймер CLOSE (сек). Пример: 120")
+        if data == "menu:auto_open_slippage_tiers":
+            await self._edit(event, self._open_slippage_tiers_text(runtime), self._open_slippage_tiers_menu(runtime)); return True
+        if data == "prompt:auto_open_slippage_tier_add":
+            return await self._ask(event, sender_id, "auto:open_slippage_tier_add", "menu:auto_open_slippage_tiers", "Формат: спред проскальзывание. Пример: 3 1.5")
+        if data.startswith("prompt:auto_open_slippage_tier_edit:"):
+            tier_index = int(data.rsplit(":", 1)[1])
+            return await self._ask(event, sender_id, f"auto:open_slippage_tier_edit:{tier_index}", "menu:auto_open_slippage_tiers", "Новый формат: спред проскальзывание. Пример: 6 2")
+        if data.startswith("action:auto_open_slippage_tier_delete:"):
+            tier_index = int(data.rsplit(":", 1)[1])
+            runtime = self._delete_open_slippage_tier(runtime, tier_index)
+            await self._edit(event, self._open_slippage_tiers_text(runtime), self._open_slippage_tiers_menu(runtime)); return True
 
         if data == "menu:auto_accounts":
             await self._edit(event, self._accounts_text(runtime), self._accounts_menu()); return True
@@ -336,6 +347,13 @@ class ControlBot(AlertPublisher):
                 runtime = self.runtime_store.update(limit_open_timeout_sec=int(text)); return self._params_text(runtime), "menu:auto_params"
             if field == "limit_close_timeout_sec":
                 runtime = self.runtime_store.update(limit_close_timeout_sec=int(text)); return self._params_text(runtime), "menu:auto_params"
+            if field == "open_slippage_tier_add":
+                runtime = self._upsert_open_slippage_tier(runtime, None, text)
+                return self._open_slippage_tiers_text(runtime), "menu:auto_open_slippage_tiers"
+            if field.startswith("open_slippage_tier_edit:"):
+                tier_index = int(field.rsplit(":", 1)[1])
+                runtime = self._upsert_open_slippage_tier(runtime, tier_index, text)
+                return self._open_slippage_tiers_text(runtime), "menu:auto_open_slippage_tiers"
             if field == "blacklist_add":
                 items = set(runtime.blacklist); items.add(self._normalize_symbol(text)); runtime = self.runtime_store.update(blacklist=sorted(items)); return self._auto_blacklist_text(runtime), "menu:auto_blacklist"
             if field == "blacklist_remove":
@@ -420,6 +438,8 @@ class ControlBot(AlertPublisher):
             await self._edit(event, self._auto_status(runtime), self._auto_menu()); return
         if key == "menu:auto_params":
             await self._edit(event, self._params_text(runtime), self._params_menu()); return
+        if key == "menu:auto_open_slippage_tiers":
+            await self._edit(event, self._open_slippage_tiers_text(runtime), self._open_slippage_tiers_menu(runtime)); return
         if key == "menu:auto_accounts":
             await self._edit(event, self._accounts_text(runtime), self._accounts_menu()); return
         if key == "menu:auto_parse":
@@ -437,6 +457,8 @@ class ControlBot(AlertPublisher):
             return self._auto_menu()
         if key == "menu:auto_params":
             return self._params_menu()
+        if key == "menu:auto_open_slippage_tiers":
+            return self._open_slippage_tiers_menu(self.runtime_store.load())
         if key == "menu:auto_accounts":
             return self._accounts_menu()
         if key == "menu:auto_parse":
@@ -536,6 +558,7 @@ class ControlBot(AlertPublisher):
         )
 
     def _params_text(self, runtime) -> str:
+        tiers_preview = self._format_open_slippage_tiers_inline(runtime)
         return (
             f"⚙️ Параметры\n\n"
             f"• Order Type: {runtime.order_type}\n"
@@ -543,9 +566,35 @@ class ControlBot(AlertPublisher):
             f"• Margin Type: {runtime.margin_type}\n"
             f"• Leverage: x{runtime.leverage}\n"
             f"• Open Limit Slippage: {runtime.limit_open_offset_pct * 100:.2f}%\n"
+            f"• Open Slip Levels: {tiers_preview}\n"
             f"• Close Limit Slippage: {runtime.limit_close_offset_pct * 100:.2f}%\n"
             f"• Open Timeout: {runtime.limit_open_timeout_sec}s\n"
             f"• Close Timeout: {runtime.limit_close_timeout_sec}s"
+        )
+
+    def _open_slippage_tiers_text(self, runtime) -> str:
+        lines = [
+            "📐 Лестница OPEN проскальзывания",
+            "",
+            f"• Базовое проскальзывание: {runtime.limit_open_offset_pct * 100:.2f}%",
+            "• Логика: берется самый высокий уровень, который не выше текущего спреда",
+        ]
+        if not runtime.open_limit_tiers:
+            lines.extend(["", "Пока нет уровней. Пример: при 3% -> 1.5%, при 6% -> 2%, при 9% -> 2.5%"])
+            return "\n".join(lines)
+        lines.append("")
+        lines.append("Уровни:")
+        for idx, tier in enumerate(runtime.open_limit_tiers, start=1):
+            lines.append(f"• #{idx}: от {tier.min_spread_pct:.2f}% -> {tier.offset_pct * 100:.2f}%")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_open_slippage_tiers_inline(runtime) -> str:
+        if not runtime.open_limit_tiers:
+            return "нет"
+        return ", ".join(
+            f"{item.min_spread_pct:.2f}%→{item.offset_pct * 100:.2f}%"
+            for item in runtime.open_limit_tiers
         )
 
     def _accounts_text(self, runtime) -> str:
@@ -578,6 +627,47 @@ class ControlBot(AlertPublisher):
                 pnl_30d_usdt = None
             return _M()  # type: ignore[return-value]
         return await self.trader.fetch_account_metrics(account.api_key, account.secret_key)
+
+    def _upsert_open_slippage_tier(self, runtime, index: int | None, text: str):
+        min_spread_pct, offset_pct = self._parse_open_slippage_tier_input(text)
+        tiers = list(runtime.open_limit_tiers)
+        if index is None:
+            tiers.append(OpenLimitSlippageTier(min_spread_pct=min_spread_pct, offset_pct=offset_pct / 100.0))
+        else:
+            if index < 0 or index >= len(tiers):
+                raise ValueError("Уровень не найден")
+            tiers[index] = OpenLimitSlippageTier(min_spread_pct=min_spread_pct, offset_pct=offset_pct / 100.0)
+        deduped: dict[float, OpenLimitSlippageTier] = {tier.min_spread_pct: tier for tier in tiers}
+        payload = [
+            {"min_spread_pct": tier.min_spread_pct, "offset_pct": tier.offset_pct}
+            for tier in sorted(deduped.values(), key=lambda item: item.min_spread_pct)
+        ]
+        return self.runtime_store.update(open_limit_tiers=payload)
+
+    def _delete_open_slippage_tier(self, runtime, index: int):
+        tiers = list(runtime.open_limit_tiers)
+        if index < 0 or index >= len(tiers):
+            raise ValueError("Уровень не найден")
+        del tiers[index]
+        payload = [
+            {"min_spread_pct": tier.min_spread_pct, "offset_pct": tier.offset_pct}
+            for tier in tiers
+        ]
+        return self.runtime_store.update(open_limit_tiers=payload)
+
+    @staticmethod
+    def _parse_open_slippage_tier_input(text: str) -> tuple[float, float]:
+        normalized = text.replace(",", ".").replace("->", " ").replace(":", " ")
+        parts = [item for item in normalized.split() if item]
+        if len(parts) != 2:
+            raise ValueError("Формат: спред проскальзывание. Пример: 3 1.5")
+        min_spread_pct = float(parts[0])
+        offset_pct = float(parts[1])
+        if min_spread_pct <= 0:
+            raise ValueError("Спред должен быть больше 0")
+        if offset_pct <= 0:
+            raise ValueError("Проскальзывание должно быть больше 0")
+        return min_spread_pct, offset_pct
 
     def _parse_text(self, runtime) -> str:
         primary = runtime.primary_parser_account()
@@ -872,9 +962,23 @@ class ControlBot(AlertPublisher):
             [Button.inline("🟡 MARKET", b"set:auto_order:MARKET"), Button.inline("🔵 LIMIT", b"set:auto_order:LIMIT")],
             [Button.inline("💵 Размер USDT", b"prompt:auto_quote_size"), Button.inline("🧲 Плечо", b"prompt:auto_leverage")],
             [Button.inline("↗️ Slip OPEN LIMIT %", b"prompt:auto_limit_open_offset"), Button.inline("↘️ Slip CLOSE LIMIT %", b"prompt:auto_limit_close_offset")],
+            [Button.inline("📐 Лестница OPEN Slip", b"menu:auto_open_slippage_tiers")],
             [Button.inline("⏱ Таймер OPEN", b"prompt:auto_limit_open_timeout"), Button.inline("⏱ Таймер CLOSE", b"prompt:auto_limit_close_timeout")],
             [Button.inline("⬅️ Назад", b"menu:auto")],
         ]
+
+    def _open_slippage_tiers_menu(self, runtime):
+        rows = [[Button.inline("➕ Добавить уровень", b"prompt:auto_open_slippage_tier_add")]]
+        for idx, tier in enumerate(runtime.open_limit_tiers):
+            label = f"✏️ {tier.min_spread_pct:.2f}% -> {tier.offset_pct * 100:.2f}%"
+            rows.append(
+                [
+                    Button.inline(label.encode("utf-8"), f"prompt:auto_open_slippage_tier_edit:{idx}".encode("utf-8")),
+                    Button.inline("❌".encode("utf-8"), f"action:auto_open_slippage_tier_delete:{idx}".encode("utf-8")),
+                ]
+            )
+        rows.append([Button.inline("⬅️ Назад", b"menu:auto_params")])
+        return rows
 
     def _accounts_menu(self):
         return [

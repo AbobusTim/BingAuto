@@ -39,6 +39,12 @@ class ParserTelegramAccount:
 
 
 @dataclass(slots=True, frozen=True)
+class OpenLimitSlippageTier:
+    min_spread_pct: float
+    offset_pct: float
+
+
+@dataclass(slots=True, frozen=True)
 class RuntimeTradingSettings:
     enabled: bool
     dry_run: bool
@@ -46,6 +52,7 @@ class RuntimeTradingSettings:
     margin_type: str
     quote_size: float
     limit_open_offset_pct: float
+    open_limit_tiers: tuple[OpenLimitSlippageTier, ...]
     limit_close_offset_pct: float
     limit_open_timeout_sec: int
     limit_close_timeout_sec: int
@@ -100,6 +107,7 @@ class RuntimeSettingsStore:
             "margin_type": runtime.margin_type,
             "quote_size": runtime.quote_size,
             "limit_open_offset_pct": runtime.limit_open_offset_pct,
+            "open_limit_tiers": [self._slippage_tier_to_payload(item) for item in runtime.open_limit_tiers],
             "limit_close_offset_pct": runtime.limit_close_offset_pct,
             "limit_open_timeout_sec": runtime.limit_open_timeout_sec,
             "limit_close_timeout_sec": runtime.limit_close_timeout_sec,
@@ -127,6 +135,7 @@ class RuntimeSettingsStore:
             "margin_type": current.margin_type,
             "quote_size": current.quote_size,
             "limit_open_offset_pct": current.limit_open_offset_pct,
+            "open_limit_tiers": [self._slippage_tier_to_payload(item) for item in current.open_limit_tiers],
             "limit_close_offset_pct": current.limit_close_offset_pct,
             "limit_open_timeout_sec": current.limit_open_timeout_sec,
             "limit_close_timeout_sec": current.limit_close_timeout_sec,
@@ -171,6 +180,7 @@ class RuntimeSettingsStore:
             margin_type="ISOLATED",
             quote_size=25.0,
             limit_open_offset_pct=0.0015,
+            open_limit_tiers=(),
             limit_close_offset_pct=0.0015,
             limit_open_timeout_sec=120,
             limit_close_timeout_sec=120,
@@ -235,6 +245,7 @@ class RuntimeSettingsStore:
             margin_type=str(payload.get("margin_type", "ISOLATED")).upper(),
             quote_size=float(payload.get("quote_size", 25.0)),
             limit_open_offset_pct=float(payload.get("limit_open_offset_pct", payload.get("limit_offset_pct", 0.0015))),
+            open_limit_tiers=self._slippage_tiers_from_payload(payload.get("open_limit_tiers", [])),
             limit_close_offset_pct=float(payload.get("limit_close_offset_pct", payload.get("limit_offset_pct", 0.0015))),
             limit_open_timeout_sec=int(payload.get("limit_open_timeout_sec", 120)),
             limit_close_timeout_sec=int(payload.get("limit_close_timeout_sec", 120)),
@@ -323,6 +334,31 @@ class RuntimeSettingsStore:
                     session=session,
                 )
             )
+        return tuple(items)
+
+    @staticmethod
+    def _slippage_tier_to_payload(tier: OpenLimitSlippageTier) -> dict[str, float]:
+        return {
+            "min_spread_pct": tier.min_spread_pct,
+            "offset_pct": tier.offset_pct,
+        }
+
+    def _slippage_tiers_from_payload(self, raw: object) -> tuple[OpenLimitSlippageTier, ...]:
+        if not isinstance(raw, list):
+            return ()
+        items: list[OpenLimitSlippageTier] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                min_spread_pct = float(item.get("min_spread_pct", 0.0))
+                offset_pct = float(item.get("offset_pct", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if min_spread_pct <= 0 or offset_pct <= 0:
+                continue
+            items.append(OpenLimitSlippageTier(min_spread_pct=min_spread_pct, offset_pct=offset_pct))
+        items.sort(key=lambda x: x.min_spread_pct)
         return tuple(items)
 
     @staticmethod

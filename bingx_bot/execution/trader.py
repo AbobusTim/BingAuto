@@ -143,8 +143,15 @@ class Trader:
         limit_price = None
         if runtime.order_type == "LIMIT":
             open_reference_price = signal.last_price or live_last
-            raw_limit_price = self._calculate_limit_price(signal.side, open_reference_price, runtime.limit_open_offset_pct)
+            open_offset_pct = self._resolve_open_limit_offset_pct(runtime, signal)
+            raw_limit_price = self._calculate_limit_price(signal.side, open_reference_price, open_offset_pct)
             limit_price = rules.normalize_price(raw_limit_price, order_side)
+            LOGGER.info(
+                "Open LIMIT slippage selected | symbol=%s spread_pct=%s offset_pct=%.4f%%",
+                signal.symbol,
+                self._resolve_signal_spread_pct(signal),
+                open_offset_pct * 100.0,
+            )
             validation_errors = rules.validate_order(
                 quantity=quantity,
                 reference_price=open_reference_price,
@@ -545,6 +552,37 @@ class Trader:
         if signal_side == SignalSide.BUY:
             return live_last * (1 + offset_pct)
         return live_last * (1 - offset_pct)
+
+    def _resolve_open_limit_offset_pct(self, runtime, signal: Signal) -> float:
+        spread_pct = self._resolve_signal_spread_pct(signal)
+        selected = runtime.limit_open_offset_pct
+        if spread_pct is None:
+            return selected
+        for tier in runtime.open_limit_tiers:
+            if spread_pct >= tier.min_spread_pct:
+                selected = tier.offset_pct
+        return selected
+
+    @staticmethod
+    def _resolve_signal_spread_pct(signal: Signal) -> float | None:
+        if signal.reason == "telegram_spread_last_above_fair":
+            if signal.spread_mark is not None:
+                return abs(signal.spread_mark) * 100.0
+            if signal.spread_index is not None:
+                return abs(signal.spread_index) * 100.0
+        if signal.reason == "telegram_spread_last_below_fair":
+            if signal.spread_mark is not None:
+                return abs(signal.spread_mark) * 100.0
+            if signal.spread_index is not None:
+                return abs(signal.spread_index) * 100.0
+        header_pct = signal.metadata.get("spread_percent_header")
+        if isinstance(header_pct, (int, float)):
+            return abs(float(header_pct))
+        if signal.spread_mark is not None:
+            return abs(signal.spread_mark) * 100.0
+        if signal.spread_index is not None:
+            return abs(signal.spread_index) * 100.0
+        return None
 
     async def _publish_open_message(
         self,
