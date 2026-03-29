@@ -30,7 +30,16 @@ class StrategyEngine:
     async def run(self) -> None:
         while True:
             signal = await self.bus.consume()
-            await self._handle(signal)
+            try:
+                await self._handle(signal)
+            except Exception as exc:
+                LOGGER.exception("Strategy handler crashed | %s %s", signal.symbol, signal.side.value)
+                await self._notify_skip(
+                    f"⛔ Ошибка обработки сигнала\n\n"
+                    f"• Токен: {signal.symbol}\n"
+                    f"• Направление: {signal.side.value}\n"
+                    f"• Причина: {exc}"
+                )
 
     async def _handle(self, signal: Signal) -> None:
         runtime = self.runtime_store.load()

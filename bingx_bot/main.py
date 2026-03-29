@@ -106,11 +106,11 @@ async def async_main() -> None:
 
     LOGGER.info("Starting app mode=%s dry_run=%s order_type=%s", settings.app_mode, runtime.dry_run, runtime.order_type)
     try:
-        tasks = [*[item.run() for item in sources]]
+        tasks = [*[_run_worker(f"source:{item.__class__.__name__}", item.run) for item in sources]]
         if settings.run_execution_engine:
-            tasks.append(engine.run())
+            tasks.append(_run_worker("engine:StrategyEngine", engine.run))
         if control_bot is not None:
-            tasks.append(control_bot.run())
+            tasks.append(_run_worker("bot:ControlBot", control_bot.run))
         if not tasks:
             raise RuntimeError("Nothing to run: all workers are disabled")
         await asyncio.gather(*tasks)
@@ -125,6 +125,18 @@ def main() -> None:
 class _NullAlertPublisher:
     async def publish_to_channels(self, channels: tuple[str, ...], text: str) -> None:
         return None
+
+
+async def _run_worker(name: str, runner) -> None:
+    while True:
+        try:
+            await runner()
+            LOGGER.warning("Worker stopped unexpectedly, restarting in 3s | %s", name)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.exception("Worker crashed, restarting in 3s | %s", name)
+        await asyncio.sleep(3)
 
 
 if __name__ == "__main__":
