@@ -818,16 +818,36 @@ class ControlBot(AlertPublisher):
 
     @staticmethod
     def _fmt_close_all(result: CloseAllResult) -> str:
-        lines = [
-            "❌ Закрыть все позиции\n",
-            f"• Попыток: {result.attempted}",
-            f"• Успешно: {result.closed}",
-            f"• Ошибок: {result.failed}",
-        ]
+        lines = ["❌ Закрыть все позиции"]
+        if result.trades:
+            lines.append("")
+            for trade in result.trades:
+                trend_icon = "📈" if trade.direction == "LONG" else "📉"
+                result_icon = "🟢" if trade.pnl_usdt >= 0 else "🔴"
+                token = trade.symbol.split("-", 1)[0].upper()
+                margin_text = "None" if trade.margin_usdt is None else f"{trade.margin_usdt:.2f}"
+                pnl_sign = "+" if trade.pnl_usdt >= 0 else ""
+                pct_sign = "+" if trade.pnl_pct >= 0 else ""
+                lines.append(f"{trend_icon} {result_icon} {token}")
+                lines.append(f"  • Направление: {trade.direction}")
+                lines.append(f"  • Размер: {trade.size:.2f}")
+                lines.append(f"  • Цена открытия: {trade.entry_price:.8f}")
+                lines.append(f"  • Цена закрытия: {trade.close_price:.8f}")
+                lines.append(f"  • Маржа: {margin_text} USDT")
+                lines.append(f"  • PnL: {pnl_sign}{trade.pnl_usdt:.2f} USDT ({pct_sign}{trade.pnl_pct:.2f}%)")
+                lines.append(f"  • Комиссия: {trade.commission_usdt:.2f} USDT")
+                lines.append("")
+        lines.extend(
+            [
+                f"• Попыток: {result.attempted}",
+                f"• Успешно: {result.closed}",
+                f"• Ошибок: {result.failed}",
+            ]
+        )
         if result.errors:
             lines.append("")
             lines.extend([f"• {e}" for e in result.errors[:5]])
-        return "\n".join(lines)
+        return "\n".join(lines).rstrip()
 
     def _main_menu(self):
         return [

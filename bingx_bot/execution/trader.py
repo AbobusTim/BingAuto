@@ -11,7 +11,7 @@ from bingx_bot.execution.bingx_client import BingXClient
 from bingx_bot.execution.instrument_rules import InstrumentRulesProvider
 from bingx_bot.models import Signal, SignalSide
 from bingx_bot.runtime_settings import RuntimeSettingsStore
-from bingx_bot.trade_history import TradeHistoryStore
+from bingx_bot.trade_history import ClosedTrade, TradeHistoryStore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -40,6 +40,7 @@ class CloseAllResult:
     closed: int
     failed: int
     errors: tuple[str, ...]
+    trades: tuple[ClosedTrade, ...] = ()
 
 
 @dataclass(slots=True)
@@ -290,6 +291,7 @@ class Trader:
         closed = 0
         failed = 0
         errors: list[str] = []
+        trades: list[ClosedTrade] = []
 
         for pos in positions:
             attempted += 1
@@ -321,9 +323,11 @@ class Trader:
                         price=limit_price,
                         timeout_sec=runtime.limit_close_timeout_sec,
                     )
-                    await self._record_and_publish_close_if_closed(pos.symbol, pos.direction, limit_price)
+                    trade = await self._record_and_publish_close_if_closed(pos.symbol, pos.direction, limit_price)
                 else:
-                    await self._record_and_publish_close_if_closed(pos.symbol, pos.direction, pos.mark_price or pos.entry_price)
+                    trade = await self._record_and_publish_close_if_closed(pos.symbol, pos.direction, pos.mark_price or pos.entry_price)
+                if trade is not None:
+                    trades.append(trade)
                 closed += 1
             except Exception as exc:
                 failed += 1
@@ -334,6 +338,7 @@ class Trader:
             closed=closed,
             failed=failed,
             errors=tuple(errors[:10]),
+            trades=tuple(trades),
         )
 
     async def list_open_limit_orders(self) -> list[PendingLimitOrder]:
@@ -595,9 +600,9 @@ class Trader:
         LOGGER.info("%s", text)
         await self._notify_status(text)
 
-    async def _record_and_publish_close_if_closed(self, symbol: str, direction: str, close_price_hint: float | None) -> None:
+    async def _record_and_publish_close_if_closed(self, symbol: str, direction: str, close_price_hint: float | None) -> ClosedTrade | None:
         if await self.has_active_position(symbol, direction):
-            return
+            return None
         close_price = close_price_hint
         if close_price is None or close_price <= 0:
             try:
@@ -605,11 +610,12 @@ class Trader:
             except Exception:
                 close_price = None
         if close_price is None or close_price <= 0:
-            return
+            return None
         trade = self.trade_history.close_by_symbol_direction(symbol, direction, close_price)
         if trade is None:
-            return
+            return None
         await self._publish_close_message(trade)
+        return trade
 
     @staticmethod
     def _pick_float(payload: dict, *keys: str) -> float | None:
