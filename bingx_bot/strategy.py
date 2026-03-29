@@ -53,6 +53,24 @@ class StrategyEngine:
             )
             return
 
+        spread_pct = self._resolve_signal_spread_pct(signal)
+        if runtime.min_entry_spread_pct > 0 and spread_pct is not None and spread_pct < runtime.min_entry_spread_pct:
+            LOGGER.info(
+                "Signal ignored by min spread filter | %s %s spread=%.4f threshold=%.4f",
+                signal.symbol,
+                signal.side.value,
+                spread_pct,
+                runtime.min_entry_spread_pct,
+            )
+            await self._notify_skip(
+                f"🚫 Сигнал пропущен\n\n"
+                f"• Токен: {signal.symbol}\n"
+                f"• Направление: {signal.side.value}\n"
+                f"• Спред: {spread_pct:.2f}%\n"
+                f"• Минимум для входа: {runtime.min_entry_spread_pct:.2f}%"
+            )
+            return
+
         if self.duplicate_guard.is_duplicate(signal):
             LOGGER.info("Duplicate signal ignored | %s %s", signal.symbol, signal.side.value)
             await self._notify_skip(
@@ -88,3 +106,14 @@ class StrategyEngine:
         if notify is None:
             return
         await notify(text)
+
+    @staticmethod
+    def _resolve_signal_spread_pct(signal: Signal) -> float | None:
+        header_pct = signal.metadata.get("spread_percent_header")
+        if isinstance(header_pct, (int, float)):
+            return abs(float(header_pct))
+        if signal.spread_mark is not None:
+            return abs(signal.spread_mark) * 100.0
+        if signal.spread_index is not None:
+            return abs(signal.spread_index) * 100.0
+        return None

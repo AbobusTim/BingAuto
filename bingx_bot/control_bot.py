@@ -154,6 +154,8 @@ class ControlBot(AlertPublisher):
 
         if data == "prompt:auto_quote_size":
             return await self._ask(event, sender_id, "auto:quote_size", "menu:auto_params", "Размер USDT. Пример: 25")
+        if data == "prompt:auto_min_entry_spread":
+            return await self._ask(event, sender_id, "auto:min_entry_spread_pct", "menu:auto_params", "Минимальный спред для входа %. Пример: 4")
         if data == "prompt:auto_leverage":
             return await self._ask(event, sender_id, "auto:leverage", "menu:auto_params", "Плечо. Пример: 2")
         if data == "prompt:auto_limit_open_offset":
@@ -337,6 +339,8 @@ class ControlBot(AlertPublisher):
             field = kind.split(":", 1)[1]
             if field == "quote_size":
                 runtime = self.runtime_store.update(quote_size=float(text)); return self._params_text(runtime), "menu:auto_params"
+            if field == "min_entry_spread_pct":
+                runtime = self.runtime_store.update(min_entry_spread_pct=float(text)); return self._params_text(runtime), "menu:auto_params"
             if field == "leverage":
                 runtime = self.runtime_store.update(leverage=int(text)); return self._params_text(runtime), "menu:auto_params"
             if field == "limit_open_offset_pct":
@@ -563,6 +567,7 @@ class ControlBot(AlertPublisher):
             f"⚙️ Параметры\n\n"
             f"• Order Type: {runtime.order_type}\n"
             f"• Size: {runtime.quote_size} USDT\n"
+            f"• Min Entry Spread: {runtime.min_entry_spread_pct:.2f}%\n"
             f"• Margin Type: {runtime.margin_type}\n"
             f"• Leverage: x{runtime.leverage}\n"
             f"• Open Limit Slippage: {runtime.limit_open_offset_pct * 100:.2f}%\n"
@@ -960,7 +965,8 @@ class ControlBot(AlertPublisher):
         return [
             [Button.inline("🧱 ISOLATED", b"set:auto_margin:ISOLATED"), Button.inline("🌐 CROSSED", b"set:auto_margin:CROSSED")],
             [Button.inline("🟡 MARKET", b"set:auto_order:MARKET"), Button.inline("🔵 LIMIT", b"set:auto_order:LIMIT")],
-            [Button.inline("💵 Размер USDT", b"prompt:auto_quote_size"), Button.inline("🧲 Плечо", b"prompt:auto_leverage")],
+            [Button.inline("💵 Размер USDT", b"prompt:auto_quote_size"), Button.inline("📏 Мин. спред", b"prompt:auto_min_entry_spread")],
+            [Button.inline("🧲 Плечо", b"prompt:auto_leverage")],
             [Button.inline("↗️ Slip OPEN LIMIT %", b"prompt:auto_limit_open_offset"), Button.inline("↘️ Slip CLOSE LIMIT %", b"prompt:auto_limit_close_offset")],
             [Button.inline("📐 Лестница OPEN Slip", b"menu:auto_open_slippage_tiers")],
             [Button.inline("⏱ Таймер OPEN", b"prompt:auto_limit_open_timeout"), Button.inline("⏱ Таймер CLOSE", b"prompt:auto_limit_close_timeout")],

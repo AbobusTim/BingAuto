@@ -51,6 +51,7 @@ class RuntimeTradingSettings:
     order_type: str
     margin_type: str
     quote_size: float
+    min_entry_spread_pct: float
     limit_open_offset_pct: float
     open_limit_tiers: tuple[OpenLimitSlippageTier, ...]
     limit_close_offset_pct: float
@@ -106,6 +107,7 @@ class RuntimeSettingsStore:
             "order_type": runtime.order_type,
             "margin_type": runtime.margin_type,
             "quote_size": runtime.quote_size,
+            "min_entry_spread_pct": runtime.min_entry_spread_pct,
             "limit_open_offset_pct": runtime.limit_open_offset_pct,
             "open_limit_tiers": [self._slippage_tier_to_payload(item) for item in runtime.open_limit_tiers],
             "limit_close_offset_pct": runtime.limit_close_offset_pct,
@@ -134,6 +136,7 @@ class RuntimeSettingsStore:
             "order_type": current.order_type,
             "margin_type": current.margin_type,
             "quote_size": current.quote_size,
+            "min_entry_spread_pct": current.min_entry_spread_pct,
             "limit_open_offset_pct": current.limit_open_offset_pct,
             "open_limit_tiers": [self._slippage_tier_to_payload(item) for item in current.open_limit_tiers],
             "limit_close_offset_pct": current.limit_close_offset_pct,
@@ -179,6 +182,7 @@ class RuntimeSettingsStore:
             order_type="MARKET",
             margin_type="ISOLATED",
             quote_size=25.0,
+            min_entry_spread_pct=0.0,
             limit_open_offset_pct=0.0015,
             open_limit_tiers=(),
             limit_close_offset_pct=0.0015,
@@ -244,6 +248,7 @@ class RuntimeSettingsStore:
             order_type=str(payload.get("order_type", "MARKET")).upper(),
             margin_type=str(payload.get("margin_type", "ISOLATED")).upper(),
             quote_size=float(payload.get("quote_size", 25.0)),
+            min_entry_spread_pct=float(payload.get("min_entry_spread_pct", 0.0)),
             limit_open_offset_pct=float(payload.get("limit_open_offset_pct", payload.get("limit_offset_pct", 0.0015))),
             open_limit_tiers=self._slippage_tiers_from_payload(payload.get("open_limit_tiers", [])),
             limit_close_offset_pct=float(payload.get("limit_close_offset_pct", payload.get("limit_offset_pct", 0.0015))),
