@@ -314,7 +314,7 @@ class Trader:
                         rules = await self.rules_provider.get(pos.symbol)
                         limit_price = rules.normalize_price(raw_limit_price, side)
                         order_type = "LIMIT"
-                await self.client.place_order(
+                response = await self.client.place_order(
                     symbol=pos.symbol,
                     side=side,
                     position_side=pos.direction,
@@ -323,16 +323,19 @@ class Trader:
                     price=limit_price,
                 )
                 if order_type == "LIMIT":
-                    await self._cancel_close_limit_if_timed_out(
+                    close_price = self._extract_filled_price(response)
+                    close_price = await self._cancel_close_limit_if_timed_out(
                         symbol=pos.symbol,
                         side=side,
                         position_side=pos.direction,
                         price=limit_price,
                         timeout_sec=runtime.limit_close_timeout_sec,
+                        close_price_hint=close_price,
                     )
-                    trade = await self._record_and_publish_close_if_closed(pos.symbol, pos.direction, limit_price)
+                    trade = await self._record_and_publish_close_if_closed(pos.symbol, pos.direction, close_price or limit_price)
                 else:
-                    trade = await self._record_and_publish_close_if_closed(pos.symbol, pos.direction, pos.mark_price or pos.entry_price)
+                    close_price = self._extract_filled_price(response) or pos.mark_price or pos.entry_price
+                    trade = await self._record_and_publish_close_if_closed(pos.symbol, pos.direction, close_price)
                 if trade is not None:
                     trades.append(trade)
                 closed += 1
@@ -450,7 +453,7 @@ class Trader:
             raw_limit_price = self._calculate_limit_price(signal_side, reference_price, runtime.limit_close_offset_pct)
             rules = await self.rules_provider.get(symbol)
             limit_price = rules.normalize_price(raw_limit_price, side)
-            await self.client.place_order(
+            response = await self.client.place_order(
                 symbol=symbol,
                 side=side,
                 position_side=direction,
@@ -467,17 +470,19 @@ class Trader:
                 reference_price,
                 limit_price,
             )
-            await self._cancel_close_limit_if_timed_out(
+            close_price = self._extract_filled_price(response)
+            close_price = await self._cancel_close_limit_if_timed_out(
                 symbol=symbol,
                 side=side,
                 position_side=direction,
                 price=limit_price,
                 timeout_sec=runtime.limit_close_timeout_sec,
+                close_price_hint=close_price,
             )
-            await self._record_and_publish_close_if_closed(symbol, direction, limit_price)
+            await self._record_and_publish_close_if_closed(symbol, direction, close_price or limit_price)
             return
 
-        await self.client.place_order(
+        response = await self.client.place_order(
             symbol=symbol,
             side=side,
             position_side=direction,
@@ -491,7 +496,8 @@ class Trader:
             side,
             total_qty,
         )
-        await self._record_and_publish_close_if_closed(symbol, direction, price_now)
+        close_price = self._extract_filled_price(response) or price_now
+        await self._record_and_publish_close_if_closed(symbol, direction, close_price)
 
     async def fetch_account_metrics(self, api_key: str, secret_key: str) -> AccountMetrics:
         old_api = self.client.api_key
@@ -627,13 +633,17 @@ class Trader:
         status_icon = "🟢" if trade.pnl_usdt >= 0 else "🔴"
         margin_text = "None" if trade.margin_usdt is None else f"{trade.margin_usdt:.8f}".rstrip("0").rstrip(".")
         pnl_sign = "+" if trade.pnl_usdt >= 0 else ""
+        pct_sign = "+" if trade.pnl_pct >= 0 else ""
         text = (
             f"{trend_icon} {status_icon} Позиция закрыта\n\n"
             f"• Токен: {token}\n"
             f"• Направление: {trade.direction}\n"
             f"• Размер: {trade.size:.2f}\n"
+            f"• Цена открытия: {trade.entry_price:.8f}\n"
+            f"• Цена закрытия: {trade.close_price:.8f}\n"
             f"• Маржа: {margin_text} USDT\n"
-            f"• PnL: {pnl_sign}{trade.pnl_usdt:.2f} USDT"
+            f"• PnL: {pnl_sign}{trade.pnl_usdt:.2f} USDT ({pct_sign}{trade.pnl_pct:.2f}%)\n"
+            f"• Комиссия: {trade.commission_usdt:.2f} USDT"
         )
         LOGGER.info("%s", text)
         await self._notify_status(text)
@@ -761,11 +771,13 @@ class Trader:
         position_side: str,
         price: float | None,
         timeout_sec: int,
-    ) -> None:
+        close_price_hint: float | None = None,
+    ) -> float | None:
         if timeout_sec <= 0:
-            return
+            return close_price_hint
         await asyncio.sleep(timeout_sec)
-        await self._cancel_and_market_close_if_needed(symbol, side, position_side, price)
+        fallback_close_price = await self._cancel_and_market_close_if_needed(symbol, side, position_side, price)
+        return fallback_close_price or close_price_hint
 
     async def _is_order_open(
         self,
@@ -843,7 +855,7 @@ class Trader:
         side: str,
         position_side: str,
         price: float | None,
-    ) -> None:
+    ) -> float | None:
         orders = await self.client.get_open_orders(symbol)
         cancelled_qty = 0.0
         cancelled_count = 0
@@ -865,10 +877,10 @@ class Trader:
                 LOGGER.exception("Failed canceling CLOSE LIMIT order | symbol=%s order_id=%s", symbol, order_id)
 
         if cancelled_count <= 0 or cancelled_qty <= 0:
-            return
+            return None
 
         try:
-            await self.client.place_order(
+            response = await self.client.place_order(
                 symbol=symbol,
                 side=side,
                 position_side=position_side,
@@ -883,6 +895,7 @@ class Trader:
                 cancelled_qty,
                 cancelled_count,
             )
+            return self._extract_filled_price(response)
         except Exception:
             LOGGER.exception(
                 "Failed CLOSE timeout fallback MARKET | symbol=%s side=%s pos=%s qty=%.12g",
@@ -891,6 +904,7 @@ class Trader:
                 position_side,
                 cancelled_qty,
             )
+            return None
 
     @staticmethod
     def _extract_order_id(payload: dict) -> str | None:
