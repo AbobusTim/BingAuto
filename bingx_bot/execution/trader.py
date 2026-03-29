@@ -321,6 +321,9 @@ class Trader:
                         price=limit_price,
                         timeout_sec=runtime.limit_close_timeout_sec,
                     )
+                    await self._record_and_publish_close_if_closed(pos.symbol, pos.direction, limit_price)
+                else:
+                    await self._record_and_publish_close_if_closed(pos.symbol, pos.direction, pos.mark_price or pos.entry_price)
                 closed += 1
             except Exception as exc:
                 failed += 1
@@ -459,6 +462,7 @@ class Trader:
                 price=limit_price,
                 timeout_sec=runtime.limit_close_timeout_sec,
             )
+            await self._record_and_publish_close_if_closed(symbol, direction, limit_price)
             return
 
         await self.client.place_order(
@@ -475,6 +479,7 @@ class Trader:
             side,
             total_qty,
         )
+        await self._record_and_publish_close_if_closed(symbol, direction, price_now)
 
     async def fetch_account_metrics(self, api_key: str, secret_key: str) -> AccountMetrics:
         old_api = self.client.api_key
@@ -572,6 +577,39 @@ class Trader:
         if notify is None:
             return
         await notify(text)
+
+    async def _publish_close_message(self, trade) -> None:
+        token = trade.symbol.split("-", 1)[0].upper()
+        trend_icon = "📈" if trade.direction == "LONG" else "📉"
+        status_icon = "🟢" if trade.pnl_usdt >= 0 else "🔴"
+        margin_text = "None" if trade.margin_usdt is None else f"{trade.margin_usdt:.8f}".rstrip("0").rstrip(".")
+        pnl_sign = "+" if trade.pnl_usdt >= 0 else ""
+        text = (
+            f"{trend_icon} {status_icon} Позиция закрыта\n\n"
+            f"• Токен: {token}\n"
+            f"• Направление: {trade.direction}\n"
+            f"• Размер: {trade.size:.2f}\n"
+            f"• Маржа: {margin_text} USDT\n"
+            f"• PnL: {pnl_sign}{trade.pnl_usdt:.2f} USDT"
+        )
+        LOGGER.info("%s", text)
+        await self._notify_status(text)
+
+    async def _record_and_publish_close_if_closed(self, symbol: str, direction: str, close_price_hint: float | None) -> None:
+        if await self.has_active_position(symbol, direction):
+            return
+        close_price = close_price_hint
+        if close_price is None or close_price <= 0:
+            try:
+                close_price = await self._fetch_live_price(symbol)
+            except Exception:
+                close_price = None
+        if close_price is None or close_price <= 0:
+            return
+        trade = self.trade_history.close_by_symbol_direction(symbol, direction, close_price)
+        if trade is None:
+            return
+        await self._publish_close_message(trade)
 
     @staticmethod
     def _pick_float(payload: dict, *keys: str) -> float | None:
