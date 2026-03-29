@@ -17,7 +17,7 @@ from bingx_bot.signal_bus import SignalBus
 
 LOGGER = logging.getLogger(__name__)
 
-SYMBOL_PATTERN = re.compile(r"\b([A-Z0-9]{2,20})[-_/]?(USDT)\b", re.IGNORECASE)
+SYMBOL_PATTERN = re.compile(r"\b([A-Z0-9]{1,20})[-_/]?(USDT)\b", re.IGNORECASE)
 LONG_PATTERN = re.compile(r"\b(LONG|BUY)\b", re.IGNORECASE)
 SHORT_PATTERN = re.compile(r"\b(SHORT|SELL)\b", re.IGNORECASE)
 PRICE_PATTERN = re.compile(r"Цена:\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
@@ -25,7 +25,7 @@ MARK_PATTERN = re.compile(r"Mark:\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
 INDEX_PATTERN = re.compile(r"Index:\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
 SPREAD_PATTERN = re.compile(r"BINGX\s*([+-]?[0-9]*\.?[0-9]+)%", re.IGNORECASE)
 SPREAD_KIND_PATTERN = re.compile(r"Спред:\s*Last.*?(Mark|Index)", re.IGNORECASE)
-ALIGNED_SYMBOL_PATTERN = re.compile(r"([A-Z0-9]{2,20}-USDT)\b", re.IGNORECASE)
+ALIGNED_SYMBOL_PATTERN = re.compile(r"([A-Z0-9]{1,20}-USDT)\b", re.IGNORECASE)
 ALIGNED_DIRECTION_PATTERN = re.compile(r"Направление:\s*(LONG|SHORT)", re.IGNORECASE)
 ALIGNED_PRICE_RANGE_PATTERN = re.compile(r"Цена:\s*([0-9]*\.?[0-9]+)\s*[^0-9]+\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
 DECIMAL_ZERO_PATTERN = re.compile(r"\b0\.\d+\b")
