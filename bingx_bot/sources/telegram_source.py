@@ -94,12 +94,23 @@ class TelegramSignalSource:
             return
         await self.client.run_until_disconnected()
 
-    def _resolve_channel(self) -> str:
+    def _resolve_channel(self) -> str | int:
         if self.runtime_store is not None:
             runtime = self.runtime_store.load()
             if runtime.parser_telegram_channel:
-                return runtime.parser_telegram_channel
-        return self.settings.telegram_channel
+                return self._normalize_channel_ref(runtime.parser_telegram_channel)
+        return self._normalize_channel_ref(self.settings.telegram_channel)
+
+    @staticmethod
+    def _normalize_channel_ref(value: str) -> str | int:
+        raw = (value or "").strip()
+        if not raw:
+            return ""
+        if raw.startswith("-100") and raw[1:].isdigit():
+            return int(raw)
+        if raw.startswith("-") and raw[1:].isdigit():
+            return int(raw)
+        return raw
 
     def _build_client(self) -> TelegramClient:
         if self.runtime_store is not None:
