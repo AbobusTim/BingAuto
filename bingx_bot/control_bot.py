@@ -635,8 +635,10 @@ class ControlBot(AlertPublisher):
             f"• Leverage: {result.leverage_ms} ms\n"
             f"• Open submit: {result.open_submit_ms} ms\n"
             f"• Open fill wait: {result.open_fill_ms} ms\n"
+            f"• Open WS latency: {('-' if result.open_ws_latency_ms is None else f'{result.open_ws_latency_ms} ms')}\n"
             f"• Close submit: {result.close_submit_ms} ms\n"
             f"• Close fill wait: {result.close_fill_ms} ms\n"
+            f"• Close WS latency: {('-' if result.close_ws_latency_ms is None else f'{result.close_ws_latency_ms} ms')}\n"
             f"• Total: {result.total_ms} ms"
         )
 

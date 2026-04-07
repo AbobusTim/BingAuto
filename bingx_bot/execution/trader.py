@@ -10,6 +10,7 @@ from time import perf_counter
 from bingx_bot.config import Settings
 from bingx_bot.execution.bingx_client import BingXClient
 from bingx_bot.execution.instrument_rules import InstrumentRulesProvider
+from bingx_bot.execution.bingx_user_stream import BingXUserStream
 from bingx_bot.models import Signal, SignalSide
 from bingx_bot.runtime_settings import RuntimeSettingsStore
 from bingx_bot.trade_history import ClosedTrade, TradeHistoryStore
@@ -77,8 +78,10 @@ class SpeedTestResult:
     leverage_ms: int
     open_submit_ms: int
     open_fill_ms: int
+    open_ws_latency_ms: int | None
     close_submit_ms: int
     close_fill_ms: int
+    close_ws_latency_ms: int | None
     total_ms: int
     detail: str
 
@@ -325,115 +328,139 @@ class Trader:
         order_side = "BUY" if direction == "LONG" else "SELL"
         signal_side = SignalSide.BUY if direction == "LONG" else SignalSide.SELL
 
-        rules_started = perf_counter()
-        rules = await self.rules_provider.get(symbol)
-        rules_ms = int((perf_counter() - rules_started) * 1000)
+        async with BingXUserStream(self.client, self.settings.bingx_user_stream_url) as user_stream:
+            rules_started = perf_counter()
+            rules = await self.rules_provider.get(symbol)
+            rules_ms = int((perf_counter() - rules_started) * 1000)
 
-        price_started = perf_counter()
-        reference_price = await self._fetch_live_price(symbol)
-        price_fetch_ms = int((perf_counter() - price_started) * 1000)
+            price_started = perf_counter()
+            reference_price = await self._fetch_live_price(symbol)
+            price_fetch_ms = int((perf_counter() - price_started) * 1000)
 
-        quote_size = min(max(runtime.quote_size, 2.0), 5.0)
-        quantity = quote_size / reference_price
-        quantity = rules.normalize_quantity(quantity)
-        quantity = rules.ensure_min_constraints(quantity, reference_price)
-        quantity = rules.normalize_quantity(quantity)
-        if quantity <= 0:
-            raise ValueError(f"Не удалось вычислить quantity для {symbol}")
+            quote_size = min(max(runtime.quote_size, 2.0), 5.0)
+            quantity = quote_size / reference_price
+            quantity = rules.normalize_quantity(quantity)
+            quantity = rules.ensure_min_constraints(quantity, reference_price)
+            quantity = rules.normalize_quantity(quantity)
+            if quantity <= 0:
+                raise ValueError(f"Не удалось вычислить quantity для {symbol}")
 
-        margin_started = perf_counter()
-        await self.client.set_margin_type(symbol, runtime.margin_type)
-        margin_type_ms = int((perf_counter() - margin_started) * 1000)
+            margin_started = perf_counter()
+            await self.client.set_margin_type(symbol, runtime.margin_type)
+            margin_type_ms = int((perf_counter() - margin_started) * 1000)
 
-        leverage_started = perf_counter()
-        await self.client.set_leverage(symbol, runtime.leverage, direction)
-        leverage_ms = int((perf_counter() - leverage_started) * 1000)
+            leverage_started = perf_counter()
+            await self.client.set_leverage(symbol, runtime.leverage, direction)
+            leverage_ms = int((perf_counter() - leverage_started) * 1000)
 
-        open_limit_price = None
-        if runtime.order_type == "LIMIT":
-            open_offset_pct = runtime.limit_open_offset_pct
-            open_limit_price = rules.normalize_price(self._calculate_limit_price(signal_side, reference_price, open_offset_pct), order_side)
+            open_limit_price = None
+            if runtime.order_type == "LIMIT":
+                open_offset_pct = runtime.limit_open_offset_pct
+                open_limit_price = rules.normalize_price(self._calculate_limit_price(signal_side, reference_price, open_offset_pct), order_side)
 
-        open_submit_started = perf_counter()
-        open_response = await self.client.place_order(
-            symbol=symbol,
-            side=order_side,
-            position_side=direction,
-            order_type=runtime.order_type,
-            quantity=quantity,
-            price=open_limit_price,
-        )
-        open_submit_ms = int((perf_counter() - open_submit_started) * 1000)
-
-        open_fill_started = perf_counter()
-        if runtime.order_type == "LIMIT":
-            open_result = await self._await_open_limit_result(
+            open_request_started_ms = self._utc_now_ms()
+            open_submit_started = perf_counter()
+            open_response = await self.client.place_order(
                 symbol=symbol,
-                order_response=open_response,
                 side=order_side,
                 position_side=direction,
+                order_type=runtime.order_type,
+                quantity=quantity,
                 price=open_limit_price,
-                timeout_sec=runtime.limit_open_timeout_sec,
             )
-            if not open_result["filled"]:
-                raise ValueError("Тестовый LIMIT-вход не исполнился за таймаут")
-            open_fill_price = float(open_result["fill_price"] or open_limit_price or reference_price)
-            opened_qty = float(open_result["filled_qty"] or quantity)
-        else:
-            open_fill_price = self._extract_filled_price(open_response)
-            if open_fill_price is None:
-                detected = await self._await_position_open(symbol, direction, timeout_sec=5)
-                if detected is None:
-                    raise ValueError("Тестовый MARKET-вход не подтвердился")
-                open_fill_price = detected.entry_price or reference_price
-                opened_qty = detected.size
+            open_submit_ms = int((perf_counter() - open_submit_started) * 1000)
+            open_order_id = self._extract_order_id(open_response)
+
+            open_fill_started = perf_counter()
+            if runtime.order_type == "LIMIT":
+                open_result = await self._await_open_limit_result(
+                    symbol=symbol,
+                    order_response=open_response,
+                    side=order_side,
+                    position_side=direction,
+                    price=open_limit_price,
+                    timeout_sec=runtime.limit_open_timeout_sec,
+                )
+                if not open_result["filled"]:
+                    raise ValueError("Тестовый LIMIT-вход не исполнился за таймаут")
+                open_fill_price = float(open_result["fill_price"] or open_limit_price or reference_price)
+                opened_qty = float(open_result["filled_qty"] or quantity)
             else:
-                detected = await self._await_position_open(symbol, direction, timeout_sec=5)
-                opened_qty = detected.size if detected is not None else quantity
-        open_fill_ms = int((perf_counter() - open_fill_started) * 1000)
+                open_fill_price = self._extract_filled_price(open_response)
+                if open_fill_price is None:
+                    detected = await self._await_position_open(symbol, direction, timeout_sec=5)
+                    if detected is None:
+                        raise ValueError("Тестовый MARKET-вход не подтвердился")
+                    open_fill_price = detected.entry_price or reference_price
+                    opened_qty = detected.size
+                else:
+                    detected = await self._await_position_open(symbol, direction, timeout_sec=5)
+                    opened_qty = detected.size if detected is not None else quantity
+            open_fill_ms = int((perf_counter() - open_fill_started) * 1000)
+            open_ws_latency_ms = await self._measure_order_ws_latency(
+                user_stream=user_stream,
+                order_id=open_order_id,
+                symbol=symbol,
+                request_started_ms=open_request_started_ms,
+            )
 
-        close_side = "SELL" if direction == "LONG" else "BUY"
-        close_submit_started = perf_counter()
-        close_response = await self.client.place_order(
-            symbol=symbol,
-            side=close_side,
-            position_side=direction,
-            order_type="MARKET",
-            quantity=opened_qty,
-        )
-        close_submit_ms = int((perf_counter() - close_submit_started) * 1000)
+            close_side = "SELL" if direction == "LONG" else "BUY"
+            close_request_started_ms = self._utc_now_ms()
+            close_submit_started = perf_counter()
+            close_response = await self.client.place_order(
+                symbol=symbol,
+                side=close_side,
+                position_side=direction,
+                order_type="MARKET",
+                quantity=opened_qty,
+            )
+            close_submit_ms = int((perf_counter() - close_submit_started) * 1000)
+            close_order_id = self._extract_order_id(close_response)
 
-        close_fill_started = perf_counter()
-        close_fill_price = self._extract_filled_price(close_response)
-        if close_fill_price is None:
-            await self._await_position_closed(symbol, direction, timeout_sec=5)
-            close_fill_price = await self._fetch_live_price(symbol)
-        else:
-            await self._await_position_closed(symbol, direction, timeout_sec=5)
-        close_fill_ms = int((perf_counter() - close_fill_started) * 1000)
+            close_fill_started = perf_counter()
+            close_fill_price = self._extract_filled_price(close_response)
+            if close_fill_price is None:
+                await self._await_position_closed(symbol, direction, timeout_sec=5)
+                close_fill_price = await self._resolve_order_fill_price(
+                    symbol=symbol,
+                    order_id=close_order_id,
+                    fallback_price=await self._fetch_live_price(symbol),
+                    start_time_ms=close_request_started_ms - 60_000,
+                )
+            else:
+                await self._await_position_closed(symbol, direction, timeout_sec=5)
+            close_fill_ms = int((perf_counter() - close_fill_started) * 1000)
+            close_ws_latency_ms = await self._measure_order_ws_latency(
+                user_stream=user_stream,
+                order_id=close_order_id,
+                symbol=symbol,
+                request_started_ms=close_request_started_ms,
+            )
 
-        total_ms = int((perf_counter() - total_started) * 1000)
-        return SpeedTestResult(
-            symbol=symbol,
-            direction=direction,
-            order_type=runtime.order_type,
-            quote_size_usdt=quote_size,
-            quantity=opened_qty,
-            reference_price=reference_price,
-            open_limit_price=open_limit_price,
-            open_fill_price=open_fill_price,
-            close_fill_price=close_fill_price,
-            rules_ms=rules_ms,
-            price_fetch_ms=price_fetch_ms,
-            margin_type_ms=margin_type_ms,
-            leverage_ms=leverage_ms,
-            open_submit_ms=open_submit_ms,
-            open_fill_ms=open_fill_ms,
-            close_submit_ms=close_submit_ms,
-            close_fill_ms=close_fill_ms,
-            total_ms=total_ms,
-            detail="speed_test_complete",
-        )
+            total_ms = int((perf_counter() - total_started) * 1000)
+            return SpeedTestResult(
+                symbol=symbol,
+                direction=direction,
+                order_type=runtime.order_type,
+                quote_size_usdt=quote_size,
+                quantity=opened_qty,
+                reference_price=reference_price,
+                open_limit_price=open_limit_price,
+                open_fill_price=open_fill_price,
+                close_fill_price=close_fill_price,
+                rules_ms=rules_ms,
+                price_fetch_ms=price_fetch_ms,
+                margin_type_ms=margin_type_ms,
+                leverage_ms=leverage_ms,
+                open_submit_ms=open_submit_ms,
+                open_fill_ms=open_fill_ms,
+                open_ws_latency_ms=open_ws_latency_ms,
+                close_submit_ms=close_submit_ms,
+                close_fill_ms=close_fill_ms,
+                close_ws_latency_ms=close_ws_latency_ms,
+                total_ms=total_ms,
+                detail="speed_test_complete",
+            )
 
     async def close_all_positions(self) -> CloseAllResult:
         runtime = self.runtime_store.load()
@@ -949,6 +976,21 @@ class Trader:
         position = await self._detect_open_position(symbol, position_side)
         return position.entry_price if position else None
 
+    async def _measure_order_ws_latency(
+        self,
+        user_stream: BingXUserStream,
+        order_id: str | None,
+        symbol: str,
+        request_started_ms: int,
+    ) -> int | None:
+        if not order_id:
+            return None
+        event = await user_stream.wait_for_order_event(order_id, timeout_sec=5.0)
+        if event is None:
+            LOGGER.info("WS latency unavailable | symbol=%s order_id=%s", symbol, order_id)
+            return None
+        return max(0, event.timestamp_ms - request_started_ms)
+
     async def _await_position_open(self, symbol: str, position_side: str, timeout_sec: int) -> ActivePosition | None:
         deadline = asyncio.get_running_loop().time() + timeout_sec
         while asyncio.get_running_loop().time() < deadline:
@@ -1114,6 +1156,40 @@ class Trader:
             if value > 0:
                 return value
         return None
+
+    async def _resolve_order_fill_price(
+        self,
+        symbol: str,
+        order_id: str | None,
+        fallback_price: float | None,
+        start_time_ms: int,
+    ) -> float | None:
+        if order_id:
+            try:
+                fills = await self.client.get_fill_orders(
+                    symbol=symbol,
+                    order_id=order_id,
+                    start_time_ms=start_time_ms,
+                    end_time_ms=self._utc_now_ms() + 60_000,
+                )
+            except Exception:
+                fills = []
+            for item in fills:
+                price = self._pick_float(item, "price", "tradePrice")
+                if price is not None and price > 0:
+                    return price
+            try:
+                order = await self.client.get_order(symbol, order_id)
+            except Exception:
+                order = {}
+            price = self._pick_float(order, "avgPrice", "price")
+            if price is not None and price > 0:
+                return price
+        return fallback_price
+
+    @staticmethod
+    def _utc_now_ms() -> int:
+        return int(datetime.now(UTC).timestamp() * 1000)
 
     @classmethod
     def _remaining_order_qty(cls, payload: dict) -> float:

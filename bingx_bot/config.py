@@ -51,6 +51,7 @@ class Settings:
     bingx_api_key: str = os.getenv("BINGX_API_KEY", "")
     bingx_secret_key: str = os.getenv("BINGX_SECRET_KEY", "")
     bingx_base_url: str = os.getenv("BINGX_BASE_URL", "https://open-api.bingx.com").rstrip("/")
+    bingx_user_stream_url: str = os.getenv("BINGX_USER_STREAM_URL", "wss://open-api-swap.bingx.com/swap-market").rstrip("/")
     bingx_category: str = os.getenv("BINGX_CATEGORY", "linear")
     bingx_poll_interval_sec: float = _get_float("BINGX_POLL_INTERVAL_SEC", 3.0)
     bingx_signal_threshold: float = _get_float("BINGX_SIGNAL_THRESHOLD", 0.003)

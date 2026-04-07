@@ -136,6 +136,56 @@ class BingXClient:
             # Some account modes only support cancel via POST endpoint.
             return await self._signed_post("/openApi/swap/v2/trade/order", params)
 
+    async def start_user_stream(self) -> str:
+        payload = await self._api_key_request("POST", "/openApi/user/auth/userDataStream", {})
+        listen_key = payload.get("listenKey")
+        nested = payload.get("data")
+        if not listen_key and isinstance(nested, dict):
+            listen_key = nested.get("listenKey")
+        if not listen_key:
+            raise BingXAPIError("BingX user stream did not return listenKey")
+        return str(listen_key)
+
+    async def keepalive_user_stream(self, listen_key: str) -> None:
+        await self._api_key_request("PUT", "/openApi/user/auth/userDataStream", {"listenKey": listen_key})
+
+    async def close_user_stream(self, listen_key: str) -> None:
+        await self._api_key_request("DELETE", "/openApi/user/auth/userDataStream", {"listenKey": listen_key})
+
+    async def get_order(self, symbol: str, order_id: str) -> dict:
+        payload = await self._signed_get(
+            "/openApi/swap/v2/trade/order",
+            {
+                "symbol": symbol,
+                "orderId": order_id,
+            },
+        )
+        if isinstance(payload, dict):
+            order = payload.get("order")
+            if isinstance(order, dict):
+                return order
+        return {}
+
+    async def get_fill_orders(self, symbol: str, order_id: str, start_time_ms: int, end_time_ms: int) -> list[dict]:
+        payload = await self._signed_get(
+            "/openApi/swap/v2/trade/allFillOrders",
+            {
+                "symbol": symbol,
+                "orderId": order_id,
+                "tradingUnit": "COIN",
+                "startTs": str(start_time_ms),
+                "endTs": str(end_time_ms),
+            },
+        )
+        if isinstance(payload, dict):
+            for key in ("fill_orders", "orders", "list", "rows", "items"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return value
+        if isinstance(payload, list):
+            return payload
+        return []
+
     async def _public_get(self, path: str, params: dict) -> dict | list[dict]:
         response = await self.client.get(f"{self.base_url}{path}", params=params)
         response.raise_for_status()
@@ -200,6 +250,20 @@ class BingXClient:
         result = response.json()
         self._raise_for_api_error(result)
         return result.get("data", result)
+
+    async def _api_key_request(self, method: str, path: str, params: dict) -> dict:
+        query = urlencode(params)
+        url = f"{self.base_url}{path}"
+        if query:
+            url = f"{url}?{query}"
+        headers = {"X-BX-APIKEY": self.api_key}
+        response = await self.client.request(method, url, headers=headers)
+        if response.status_code == 204:
+            return {}
+        response.raise_for_status()
+        payload = response.json()
+        self._raise_for_api_error(payload)
+        return payload.get("data", payload)
 
     @staticmethod
     def _raise_for_api_error(payload: object) -> None:
