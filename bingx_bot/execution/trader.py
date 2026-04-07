@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import isfinite
+from time import perf_counter
 
 from bingx_bot.config import Settings
 from bingx_bot.execution.bingx_client import BingXClient
@@ -57,6 +58,29 @@ class PendingLimitOrder:
 class AccountMetrics:
     balance_usdt: float | None
     pnl_30d_usdt: float | None
+
+
+@dataclass(slots=True)
+class SpeedTestResult:
+    symbol: str
+    direction: str
+    order_type: str
+    quote_size_usdt: float
+    quantity: float
+    reference_price: float
+    open_limit_price: float | None
+    open_fill_price: float | None
+    close_fill_price: float | None
+    rules_ms: int
+    price_fetch_ms: int
+    margin_type_ms: int
+    leverage_ms: int
+    open_submit_ms: int
+    open_fill_ms: int
+    close_submit_ms: int
+    close_fill_ms: int
+    total_ms: int
+    detail: str
 
 
 class Trader:
@@ -284,6 +308,132 @@ class Trader:
         symbol_upper = symbol.upper()
         direction_upper = direction.upper()
         return any(item.symbol == symbol_upper and item.direction == direction_upper and item.size > 0 for item in items)
+
+    async def measure_speed(self, symbol: str, direction: str) -> SpeedTestResult:
+        runtime = self.runtime_store.load()
+        if runtime.dry_run:
+            raise ValueError("Для замера выключи Dry Run")
+        if not self._apply_active_credentials(runtime):
+            raise ValueError("Не выбран основной аккаунт")
+
+        symbol = symbol.upper()
+        direction = direction.upper()
+        if direction not in {"LONG", "SHORT"}:
+            raise ValueError("Направление должно быть LONG или SHORT")
+
+        total_started = perf_counter()
+        order_side = "BUY" if direction == "LONG" else "SELL"
+        signal_side = SignalSide.BUY if direction == "LONG" else SignalSide.SELL
+
+        rules_started = perf_counter()
+        rules = await self.rules_provider.get(symbol)
+        rules_ms = int((perf_counter() - rules_started) * 1000)
+
+        price_started = perf_counter()
+        reference_price = await self._fetch_live_price(symbol)
+        price_fetch_ms = int((perf_counter() - price_started) * 1000)
+
+        quote_size = min(max(runtime.quote_size, 2.0), 5.0)
+        quantity = quote_size / reference_price
+        quantity = rules.normalize_quantity(quantity)
+        quantity = rules.ensure_min_constraints(quantity, reference_price)
+        quantity = rules.normalize_quantity(quantity)
+        if quantity <= 0:
+            raise ValueError(f"Не удалось вычислить quantity для {symbol}")
+
+        margin_started = perf_counter()
+        await self.client.set_margin_type(symbol, runtime.margin_type)
+        margin_type_ms = int((perf_counter() - margin_started) * 1000)
+
+        leverage_started = perf_counter()
+        await self.client.set_leverage(symbol, runtime.leverage, direction)
+        leverage_ms = int((perf_counter() - leverage_started) * 1000)
+
+        open_limit_price = None
+        if runtime.order_type == "LIMIT":
+            open_offset_pct = runtime.limit_open_offset_pct
+            open_limit_price = rules.normalize_price(self._calculate_limit_price(signal_side, reference_price, open_offset_pct), order_side)
+
+        open_submit_started = perf_counter()
+        open_response = await self.client.place_order(
+            symbol=symbol,
+            side=order_side,
+            position_side=direction,
+            order_type=runtime.order_type,
+            quantity=quantity,
+            price=open_limit_price,
+        )
+        open_submit_ms = int((perf_counter() - open_submit_started) * 1000)
+
+        open_fill_started = perf_counter()
+        if runtime.order_type == "LIMIT":
+            open_result = await self._await_open_limit_result(
+                symbol=symbol,
+                order_response=open_response,
+                side=order_side,
+                position_side=direction,
+                price=open_limit_price,
+                timeout_sec=runtime.limit_open_timeout_sec,
+            )
+            if not open_result["filled"]:
+                raise ValueError("Тестовый LIMIT-вход не исполнился за таймаут")
+            open_fill_price = float(open_result["fill_price"] or open_limit_price or reference_price)
+            opened_qty = float(open_result["filled_qty"] or quantity)
+        else:
+            open_fill_price = self._extract_filled_price(open_response)
+            if open_fill_price is None:
+                detected = await self._await_position_open(symbol, direction, timeout_sec=5)
+                if detected is None:
+                    raise ValueError("Тестовый MARKET-вход не подтвердился")
+                open_fill_price = detected.entry_price or reference_price
+                opened_qty = detected.size
+            else:
+                detected = await self._await_position_open(symbol, direction, timeout_sec=5)
+                opened_qty = detected.size if detected is not None else quantity
+        open_fill_ms = int((perf_counter() - open_fill_started) * 1000)
+
+        close_side = "SELL" if direction == "LONG" else "BUY"
+        close_submit_started = perf_counter()
+        close_response = await self.client.place_order(
+            symbol=symbol,
+            side=close_side,
+            position_side=direction,
+            order_type="MARKET",
+            quantity=opened_qty,
+        )
+        close_submit_ms = int((perf_counter() - close_submit_started) * 1000)
+
+        close_fill_started = perf_counter()
+        close_fill_price = self._extract_filled_price(close_response)
+        if close_fill_price is None:
+            await self._await_position_closed(symbol, direction, timeout_sec=5)
+            close_fill_price = await self._fetch_live_price(symbol)
+        else:
+            await self._await_position_closed(symbol, direction, timeout_sec=5)
+        close_fill_ms = int((perf_counter() - close_fill_started) * 1000)
+
+        total_ms = int((perf_counter() - total_started) * 1000)
+        return SpeedTestResult(
+            symbol=symbol,
+            direction=direction,
+            order_type=runtime.order_type,
+            quote_size_usdt=quote_size,
+            quantity=opened_qty,
+            reference_price=reference_price,
+            open_limit_price=open_limit_price,
+            open_fill_price=open_fill_price,
+            close_fill_price=close_fill_price,
+            rules_ms=rules_ms,
+            price_fetch_ms=price_fetch_ms,
+            margin_type_ms=margin_type_ms,
+            leverage_ms=leverage_ms,
+            open_submit_ms=open_submit_ms,
+            open_fill_ms=open_fill_ms,
+            close_submit_ms=close_submit_ms,
+            close_fill_ms=close_fill_ms,
+            total_ms=total_ms,
+            detail="speed_test_complete",
+        )
 
     async def close_all_positions(self) -> CloseAllResult:
         runtime = self.runtime_store.load()
@@ -798,6 +948,25 @@ class Trader:
     async def _detect_position_fill_price(self, symbol: str, position_side: str) -> float | None:
         position = await self._detect_open_position(symbol, position_side)
         return position.entry_price if position else None
+
+    async def _await_position_open(self, symbol: str, position_side: str, timeout_sec: int) -> ActivePosition | None:
+        deadline = asyncio.get_running_loop().time() + timeout_sec
+        while asyncio.get_running_loop().time() < deadline:
+            position = await self._detect_open_position(symbol, position_side)
+            if position is not None and position.size > 0:
+                return position
+            await asyncio.sleep(0.2)
+        return await self._detect_open_position(symbol, position_side)
+
+    async def _await_position_closed(self, symbol: str, position_side: str, timeout_sec: int) -> bool:
+        deadline = asyncio.get_running_loop().time() + timeout_sec
+        while asyncio.get_running_loop().time() < deadline:
+            position = await self._detect_open_position(symbol, position_side)
+            if position is None or position.size <= 0:
+                return True
+            await asyncio.sleep(0.2)
+        position = await self._detect_open_position(symbol, position_side)
+        return position is None or position.size <= 0
 
     async def _detect_open_position(self, symbol: str, position_side: str) -> ActivePosition | None:
         rows = await self.client.get_open_positions(symbol)

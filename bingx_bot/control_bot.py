@@ -18,7 +18,7 @@ from bingx_bot.stats import AlertStatsStore
 from bingx_bot.trade_history import TradeHistoryStore
 
 if TYPE_CHECKING:
-    from bingx_bot.execution.trader import AccountMetrics, ActivePosition, CloseAllResult, PendingLimitOrder, Trader
+    from bingx_bot.execution.trader import AccountMetrics, ActivePosition, CloseAllResult, PendingLimitOrder, SpeedTestResult, Trader
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ class ControlBot(AlertPublisher):
         self.pending: dict[int, PendingInput] = {}
         self.account_drafts: dict[int, dict[str, str]] = {}
         self.parse_drafts: dict[int, dict[str, str]] = {}
+        self.timing_drafts: dict[int, dict[str, str]] = {}
         self.last_active_user_id: int | None = None
         self.client = TelegramClient(settings.telegram_bot_session, settings.telegram_api_id, settings.telegram_api_hash)
 
@@ -136,6 +137,31 @@ class ControlBot(AlertPublisher):
             text = self._fmt_close_all(result)
             await self._edit(event, text, self._auto_menu())
             await self.notify_status(text)
+            return True
+        if data == "prompt:auto_speed_symbol":
+            return await self._ask(event, sender_id, "auto:speed_symbol", "menu:auto", "Введи тикер. Пример: SIREN или SIREN-USDT")
+        if data == "menu:auto_speed_side":
+            symbol = self.timing_drafts.get(sender_id or -1, {}).get("symbol")
+            if not symbol:
+                await self._edit(event, "Сначала введи тикер для замера скорости.", self._auto_menu()); return True
+            await self._edit(event, f"⚡ Замер скорости\n\n• Тикер: {symbol}\n• Выбери направление теста", self._speed_side_menu(symbol)); return True
+        if data.startswith("action:auto_speed_run:"):
+            if not self.trader:
+                await self._edit(event, "Трейдер не готов", self._auto_menu()); return True
+            direction = data.rsplit(":", 1)[1].upper()
+            draft = self.timing_drafts.get(sender_id or -1, {})
+            symbol = draft.get("symbol")
+            if not symbol:
+                await self._edit(event, "Сначала введи тикер для замера скорости.", self._auto_menu()); return True
+            await self._edit(event, f"⚡ Замеряю скорость\n\n• Тикер: {symbol}\n• Направление: {direction}\n• Статус: выполняется...", self._auto_menu())
+            try:
+                result = await self.trader.measure_speed(symbol, direction)
+            except Exception as exc:
+                await self._edit(event, f"⚡ Замер скорости не удался\n\n• Тикер: {symbol}\n• Направление: {direction}\n• Причина: {exc}", self._auto_menu())
+                return True
+            text = self._fmt_speed_test(result)
+            await self.notify_status(text)
+            await self._edit(event, text, self._auto_menu())
             return True
         if data == "show:auto_trade_history":
             await self._edit(event, self.trade_history.format_recent(limit=30), self._auto_menu()); return True
@@ -310,6 +336,7 @@ class ControlBot(AlertPublisher):
         state = self.pending.pop(sender_id, None)
         self.account_drafts.pop(sender_id, None)
         self.parse_drafts.pop(sender_id, None)
+        self.timing_drafts.pop(sender_id, None)
         if state is None:
             await self._edit(event, "Панель управления", self._main_menu()); return True
         await self._show_menu(event, state.return_menu)
@@ -330,7 +357,8 @@ class ControlBot(AlertPublisher):
             self.pending[sender_id] = state
             await event.respond(f"Input error: {exc}", buttons=self._cancel_menu())
             return True
-        await event.respond(response, buttons=self._menu(menu_key))
+        buttons = self._speed_side_menu(self.timing_drafts.get(sender_id, {}).get("symbol", "-")) if menu_key == "menu:auto_speed_side" else self._menu(menu_key)
+        await event.respond(response, buttons=buttons)
         return True
 
     async def _apply_pending(self, sender_id: int, kind: str, text: str) -> tuple[str, str]:
@@ -339,6 +367,10 @@ class ControlBot(AlertPublisher):
             field = kind.split(":", 1)[1]
             if field == "quote_size":
                 runtime = self.runtime_store.update(quote_size=float(text)); return self._params_text(runtime), "menu:auto_params"
+            if field == "speed_symbol":
+                symbol = self._normalize_symbol(text)
+                self.timing_drafts[sender_id] = {"symbol": symbol}
+                return f"⚡ Замер скорости\n\n• Тикер: {symbol}\n• Теперь выбери направление", "menu:auto_speed_side"
             if field == "min_entry_spread_pct":
                 runtime = self.runtime_store.update(min_entry_spread_pct=float(text)); return self._params_text(runtime), "menu:auto_params"
             if field == "leverage":
@@ -440,6 +472,9 @@ class ControlBot(AlertPublisher):
         runtime = self.runtime_store.load()
         if key == "menu:auto":
             await self._edit(event, self._auto_status(runtime), self._auto_menu()); return
+        if key == "menu:auto_speed_side":
+            symbol = self.timing_drafts.get((await self._sender_id(event)) or -1, {}).get("symbol", "-")
+            await self._edit(event, f"⚡ Замер скорости\n\n• Тикер: {symbol}\n• Выбери направление теста", self._speed_side_menu(symbol)); return
         if key == "menu:auto_params":
             await self._edit(event, self._params_text(runtime), self._params_menu()); return
         if key == "menu:auto_open_slippage_tiers":
@@ -459,6 +494,8 @@ class ControlBot(AlertPublisher):
     def _menu(self, key: str):
         if key == "menu:auto":
             return self._auto_menu()
+        if key == "menu:auto_speed_side":
+            return self._speed_side_menu("-")
         if key == "menu:auto_params":
             return self._params_menu()
         if key == "menu:auto_open_slippage_tiers":
@@ -575,6 +612,32 @@ class ControlBot(AlertPublisher):
             f"• Close Limit Slippage: {runtime.limit_close_offset_pct * 100:.2f}%\n"
             f"• Open Timeout: {runtime.limit_open_timeout_sec}s\n"
             f"• Close Timeout: {runtime.limit_close_timeout_sec}s"
+        )
+
+    @staticmethod
+    def _fmt_speed_test(result: "SpeedTestResult") -> str:
+        return (
+            f"⚡ Замер скорости\n\n"
+            f"• Токен: {result.symbol.split('-', 1)[0].upper()}\n"
+            f"• Направление: {result.direction}\n"
+            f"• Тип входа: {result.order_type}\n"
+            f"• Тестовый размер: {result.quote_size_usdt:.2f} USDT\n"
+            f"• Кол-во: {result.quantity:.6f}\n"
+            f"• Цена референса: {result.reference_price:.8f}\n"
+            f"• Цена входа: {('-' if result.open_fill_price is None else f'{result.open_fill_price:.8f}')}\n"
+            f"• Цена закрытия: {('-' if result.close_fill_price is None else f'{result.close_fill_price:.8f}')}\n"
+            f"• LIMIT цена: {('-' if result.open_limit_price is None else f'{result.open_limit_price:.8f}')}\n"
+            f"\n"
+            f"Этапы:\n"
+            f"• Rules: {result.rules_ms} ms\n"
+            f"• Price fetch: {result.price_fetch_ms} ms\n"
+            f"• Margin type: {result.margin_type_ms} ms\n"
+            f"• Leverage: {result.leverage_ms} ms\n"
+            f"• Open submit: {result.open_submit_ms} ms\n"
+            f"• Open fill wait: {result.open_fill_ms} ms\n"
+            f"• Close submit: {result.close_submit_ms} ms\n"
+            f"• Close fill wait: {result.close_fill_ms} ms\n"
+            f"• Total: {result.total_ms} ms"
         )
 
     def _open_slippage_tiers_text(self, runtime) -> str:
@@ -954,11 +1017,20 @@ class ControlBot(AlertPublisher):
         return [
             [Button.inline("🟢 Вкл/Выкл", b"toggle:auto_enabled"), Button.inline("🧪 Dry Run", b"toggle:auto_dryrun")],
             [Button.inline("⚙️ Параметры", b"menu:auto_params"), Button.inline("👤 Аккаунты", b"menu:auto_accounts")],
+            [Button.inline("⚡ Замер скорости", b"prompt:auto_speed_symbol")],
             [Button.inline("🛰 Парс", b"menu:auto_parse")],
             [Button.inline("🚫 Blacklist", b"menu:auto_blacklist")],
             [Button.inline("📦 Активные позиции", b"show:auto_positions")],
             [Button.inline("📚 История сделок", b"show:auto_trade_history"), Button.inline("❌ Закрыть все", b"action:auto_close_all")],
             [Button.inline("⬅️ Назад", b"menu:home")],
+        ]
+
+    @staticmethod
+    def _speed_side_menu(symbol: str):
+        return [
+            [Button.inline(f"📈 LONG {symbol}".encode("utf-8"), b"action:auto_speed_run:LONG")],
+            [Button.inline(f"📉 SHORT {symbol}".encode("utf-8"), b"action:auto_speed_run:SHORT")],
+            [Button.inline("⬅️ Назад", b"menu:auto")],
         ]
 
     def _params_menu(self):
