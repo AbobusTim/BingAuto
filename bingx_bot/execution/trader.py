@@ -101,6 +101,8 @@ class Trader:
         self.rules_provider = InstrumentRulesProvider(client)
         self.trade_history = trade_history
         self.notifier = notifier
+        self._margin_type_cache: dict[str, str] = {}
+        self._leverage_cache: dict[tuple[str, str], int] = {}
 
     async def execute(self, signal: Signal) -> ExecuteResult:
         runtime = self.runtime_store.load()
@@ -165,8 +167,8 @@ class Trader:
             return ExecuteResult(status="skipped_dry_run", detail="dry run")
 
         live_last = await self._fetch_live_price(signal.symbol)
-        await self.client.set_margin_type(signal.symbol, runtime.margin_type)
-        await self.client.set_leverage(signal.symbol, runtime.leverage, position_side)
+        await self._ensure_margin_type(signal.symbol, runtime.margin_type)
+        await self._ensure_leverage(signal.symbol, runtime.leverage, position_side)
         limit_price = None
         if runtime.order_type == "LIMIT":
             open_reference_price = signal.last_price or live_last
@@ -346,11 +348,11 @@ class Trader:
                 raise ValueError(f"Не удалось вычислить quantity для {symbol}")
 
             margin_started = perf_counter()
-            await self.client.set_margin_type(symbol, runtime.margin_type)
+            await self._ensure_margin_type(symbol, runtime.margin_type)
             margin_type_ms = int((perf_counter() - margin_started) * 1000)
 
             leverage_started = perf_counter()
-            await self.client.set_leverage(symbol, runtime.leverage, direction)
+            await self._ensure_leverage(symbol, runtime.leverage, direction)
             leverage_ms = int((perf_counter() - leverage_started) * 1000)
 
             open_limit_price = None
@@ -370,6 +372,15 @@ class Trader:
             )
             open_submit_ms = int((perf_counter() - open_submit_started) * 1000)
             open_order_id = self._extract_order_id(open_response)
+            open_ws_task = asyncio.create_task(
+                self._measure_order_ws_latency(
+                    user_stream=user_stream,
+                    order_id=open_order_id,
+                    symbol=symbol,
+                    request_started_ms=open_request_started_ms,
+                ),
+                name=f"speed_open_ws_latency:{symbol}",
+            )
 
             open_fill_started = perf_counter()
             if runtime.order_type == "LIMIT":
@@ -397,12 +408,7 @@ class Trader:
                     detected = await self._await_position_open(symbol, direction, timeout_sec=5)
                     opened_qty = detected.size if detected is not None else quantity
             open_fill_ms = int((perf_counter() - open_fill_started) * 1000)
-            open_ws_latency_ms = await self._measure_order_ws_latency(
-                user_stream=user_stream,
-                order_id=open_order_id,
-                symbol=symbol,
-                request_started_ms=open_request_started_ms,
-            )
+            open_ws_latency_ms = await self._drain_optional_task(open_ws_task)
 
             close_side = "SELL" if direction == "LONG" else "BUY"
             close_request_started_ms = self._utc_now_ms()
@@ -416,6 +422,15 @@ class Trader:
             )
             close_submit_ms = int((perf_counter() - close_submit_started) * 1000)
             close_order_id = self._extract_order_id(close_response)
+            close_ws_task = asyncio.create_task(
+                self._measure_order_ws_latency(
+                    user_stream=user_stream,
+                    order_id=close_order_id,
+                    symbol=symbol,
+                    request_started_ms=close_request_started_ms,
+                ),
+                name=f"speed_close_ws_latency:{symbol}",
+            )
 
             close_fill_started = perf_counter()
             close_fill_price = self._extract_filled_price(close_response)
@@ -430,12 +445,7 @@ class Trader:
             else:
                 await self._await_position_closed(symbol, direction, timeout_sec=5)
             close_fill_ms = int((perf_counter() - close_fill_started) * 1000)
-            close_ws_latency_ms = await self._measure_order_ws_latency(
-                user_stream=user_stream,
-                order_id=close_order_id,
-                symbol=symbol,
-                request_started_ms=close_request_started_ms,
-            )
+            close_ws_latency_ms = await self._drain_optional_task(close_ws_task)
 
             total_ms = int((perf_counter() - total_started) * 1000)
             return SpeedTestResult(
@@ -990,6 +1000,35 @@ class Trader:
             LOGGER.info("WS latency unavailable | symbol=%s order_id=%s", symbol, order_id)
             return None
         return max(0, event.timestamp_ms - request_started_ms)
+
+    async def _drain_optional_task(self, task: asyncio.Task[int | None] | None) -> int | None:
+        if task is None:
+            return None
+        if task.done():
+            return task.result()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return None
+
+    async def _ensure_margin_type(self, symbol: str, margin_type: str) -> None:
+        normalized_symbol = symbol.upper()
+        normalized_margin_type = margin_type.upper()
+        if self._margin_type_cache.get(normalized_symbol) == normalized_margin_type:
+            return
+        await self.client.set_margin_type(normalized_symbol, normalized_margin_type)
+        self._margin_type_cache[normalized_symbol] = normalized_margin_type
+
+    async def _ensure_leverage(self, symbol: str, leverage: int, side: str) -> None:
+        normalized_symbol = symbol.upper()
+        normalized_side = side.upper()
+        cache_key = (normalized_symbol, normalized_side)
+        if self._leverage_cache.get(cache_key) == leverage:
+            return
+        await self.client.set_leverage(normalized_symbol, leverage, normalized_side)
+        self._leverage_cache[cache_key] = leverage
 
     async def _await_position_open(self, symbol: str, position_side: str, timeout_sec: int) -> ActivePosition | None:
         deadline = asyncio.get_running_loop().time() + timeout_sec
