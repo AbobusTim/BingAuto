@@ -106,6 +106,18 @@ Environment variables:
 - `TELEGRAM_ADMIN_IDS`
 - `RUN_CONTROL_BOT=true`
 
+Access control:
+
+- control bot commands are allowed only for ids listed in `TELEGRAM_ADMIN_IDS`
+- if `TELEGRAM_ADMIN_IDS` is empty, all control commands are denied
+- helper command to manage ids from terminal:
+
+```powershell
+python -m bingx_bot.admin_ids add 123456789
+python -m bingx_bot.admin_ids list
+python -m bingx_bot.admin_ids remove 123456789
+```
+
 Alert flow:
 
 - when spread reaches level 1, a first alert is sent

@@ -53,6 +53,11 @@ class ControlBot(AlertPublisher):
     async def run(self) -> None:
         if not self.settings.run_control_bot or not self.settings.telegram_bot_token:
             return
+        if not self.settings.telegram_admin_ids:
+            LOGGER.warning(
+                "Control bot is enabled but TELEGRAM_ADMIN_IDS is empty: all incoming commands will be denied "
+                "until at least one admin id is configured."
+            )
         self._register_handlers()
         await self.client.start(bot_token=self.settings.telegram_bot_token)
         await self.client.run_until_disconnected()
@@ -69,13 +74,21 @@ class ControlBot(AlertPublisher):
     async def notify_status(self, text: str) -> None:
         if not self.client.is_connected():
             return
+        allowed = self.settings.telegram_admin_ids
+        if not allowed:
+            LOGGER.warning("notify_status skipped: TELEGRAM_ADMIN_IDS is empty")
+            return
         targets: list[int] = []
-        if self.last_active_user_id is not None:
+        if self.last_active_user_id is not None and self.last_active_user_id in allowed:
             targets.append(self.last_active_user_id)
         runtime = self.runtime_store.load()
-        if runtime.notification_chat_id is not None and runtime.notification_chat_id not in targets:
+        if (
+            runtime.notification_chat_id is not None
+            and runtime.notification_chat_id in allowed
+            and runtime.notification_chat_id not in targets
+        ):
             targets.append(runtime.notification_chat_id)
-        for item in self.settings.telegram_admin_ids:
+        for item in allowed:
             if item not in targets:
                 targets.append(item)
         if not targets:
@@ -527,7 +540,10 @@ class ControlBot(AlertPublisher):
     def _is_allowed(self, sender_id: int | None) -> bool:
         if sender_id is None:
             return False
-        return not self.settings.telegram_admin_ids or sender_id in self.settings.telegram_admin_ids
+        allowed = self.settings.telegram_admin_ids
+        if not allowed:
+            return False
+        return sender_id in allowed
 
     def _profile(self, runtime, key: str) -> AlertProfile:
         return runtime.index_alerts if key == "index" else runtime.mark_alerts
